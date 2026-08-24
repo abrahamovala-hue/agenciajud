@@ -82,6 +82,40 @@ _POLICY_EXCEPTION = re.compile(
 )
 
 
+# Pedido de reembolso/troca combinado com prazo alem da garantia de 7 dias.
+# Casa no texto da CLIENTE, nao na resposta do agente.
+_REFUND_WORDS = re.compile(
+    # `devol\w*` cobre devolver/devolucao/devolvi — `devolu\w*` deixava
+    # "devolver" passar, que e a forma mais comum na fala da cliente.
+    r"\b(reembols\w*|devol\w*|estorn\w*|dinheiro de volta|cancel\w*|troca|trocar)\b"
+)
+_BEYOND_WINDOW = re.compile(
+    r"\b(\d+)\s*(dias?|semanas?|mes(es)?)\b|\b(mes passado|semana passada|ano passado|faz tempo)\b"
+)
+
+
+def _requests_policy_exception(message: str) -> bool:
+    """A cliente esta pedindo excecao de politica?
+
+    Verdadeiro quando ela fala de reembolso/devolucao E indica um prazo maior
+    que a garantia documentada (7 dias). Fora dessa combinacao, um pedido de
+    reembolso normal segue o fluxo comum.
+    """
+
+    norm = _normalize(message)
+    if not _REFUND_WORDS.search(norm):
+        return False
+
+    for m in _BEYOND_WINDOW.finditer(norm):
+        if m.group(4):  # "mes passado", "faz tempo"
+            return True
+        quantidade, unidade = int(m.group(1)), m.group(2)
+        dias = quantidade * {"dia": 1, "dias": 1, "semana": 7, "semanas": 7}.get(unidade, 30)
+        if dias > 7:
+            return True
+    return False
+
+
 def _normalize(text: str) -> str:
     decomposed = unicodedata.normalize("NFD", text)
     return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn").casefold()
@@ -139,6 +173,7 @@ def evaluate_final_response(
     references: list[str],
     sources_opened: list[str],
     escalated: bool = False,
+    incoming_message: str = "",
 ) -> EvidenceGateResult:
     """Decide se esta resposta pode ser enviada a cliente.
 
@@ -148,6 +183,21 @@ def evaluate_final_response(
                        apoiado apenas em fonte nao confirmada (TEMPLATE).
     REJECTED        -> citou fonte que nao abriu.
     """
+
+    # O PEDIDO da cliente tambem decide. Medido em 5 execucoes do mesmo caso:
+    # olhando so a resposta, o gate escalava ou nao dependendo da redacao do
+    # agente ("fora da garantia" escalava; "passou do prazo de 7 dias" nao).
+    # Decisao de seguranca nao pode depender de como o modelo escreveu — o
+    # pedido "comprei ha 30 dias, quero reembolso" e determinístico.
+    if incoming_message and _requests_policy_exception(incoming_message):
+        return EvidenceGateResult(
+            status="HUMAN_REQUIRED",
+            factual_claims_detected=detect_factual_claims(response),
+            evidence_required=True,
+            sources_opened=[s for s in sources_opened if s],
+            references=references,
+            reason="A cliente pediu excecao de politica (reembolso fora do prazo). BUSINESS_RULES 11.",
+        )
 
     claims = detect_factual_claims(response)
     opened = [s for s in sources_opened if s]

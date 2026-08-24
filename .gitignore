@@ -62,3 +62,7 @@ tmp
 
 # Optional: local PyPI creds (uncomment if you ever create it)
 # .pypirc
+# Artefatos de execucao dos evals: regeneraveis, contem saida completa dos
+# modelos e incluem rodadas parciais. O resultado consolidado fica versionado
+# em evals/RESULTS_ROUND2.md.
+evals/results/

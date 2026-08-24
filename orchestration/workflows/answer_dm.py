@@ -82,6 +82,7 @@ def _finalize(
     handoff: AgentHandoff,
     decision: AgentStepDecision,
     escalated: bool = False,
+    incoming_message: str = "",
 ) -> EvidenceGateResult:
     """Aplica o Evidence Gate a resposta final e grava o rastro no log.
 
@@ -95,6 +96,7 @@ def _finalize(
         references=handoff.references,
         sources_opened=handoff.sources_opened,
         escalated=escalated,
+        incoming_message=incoming_message,
     )
 
     # A cliente nunca ve nome de documento interno. A evidencia continua
@@ -216,7 +218,7 @@ Preencha o restante do output_schema normalmente."""
             **sessao,
         )
         _patch_classify_to_agent(log, "community-dm-agent")
-        _finalize(log, agent_id="community-dm-agent", handoff=handoff, decision=decision)
+        _finalize(log, incoming_message=message, agent_id="community-dm-agent", handoff=handoff, decision=decision)
         return StepOutput(content=handoff, step_name="route_to_community")
 
     def route_to_support(step_input: StepInput) -> StepOutput:
@@ -232,7 +234,7 @@ Preencha o restante do output_schema normalmente."""
             **sessao,
         )
         _patch_classify_to_agent(log, "customer-support-agent")
-        _finalize(log, agent_id="customer-support-agent", handoff=handoff, decision=decision)
+        _finalize(log, incoming_message=message, agent_id="customer-support-agent", handoff=handoff, decision=decision)
         return StepOutput(content=handoff, step_name="route_to_support")
 
     def route_to_sales(step_input: StepInput) -> StepOutput:
@@ -248,7 +250,7 @@ Preencha o restante do output_schema normalmente."""
             **sessao,
         )
         _patch_classify_to_agent(log, "sales-conversion-agent")
-        _finalize(log, agent_id="sales-conversion-agent", handoff=handoff, decision=decision)
+        _finalize(log, incoming_message=message, agent_id="sales-conversion-agent", handoff=handoff, decision=decision)
         return StepOutput(content=handoff, step_name="route_to_sales")
 
     def route_to_crm(step_input: StepInput) -> StepOutput:
@@ -264,7 +266,7 @@ Preencha o restante do output_schema normalmente."""
             **sessao,
         )
         _patch_classify_to_agent(log, "crm-lifecycle-agent")
-        _finalize(log, agent_id="crm-lifecycle-agent", handoff=handoff, decision=decision)
+        _finalize(log, incoming_message=message, agent_id="crm-lifecycle-agent", handoff=handoff, decision=decision)
         return StepOutput(content=handoff, step_name="route_to_crm")
 
     def route_to_human(step_input: StepInput) -> StepOutput:
@@ -286,7 +288,7 @@ Preencha o restante do output_schema normalmente."""
         log.record(handoff)
         _patch_classify_to_agent(log, "judith")
         log.escalate(raised_by="community-dm-agent", reason="Mensagem sensivel ou fora de politica", at_step="route")
-        _finalize(log, agent_id="community-dm-agent", handoff=handoff, decision=routing, escalated=True)
+        _finalize(log, incoming_message=message, agent_id="community-dm-agent", handoff=handoff, decision=routing, escalated=True)
         return StepOutput(content=handoff, step_name="route_to_human")
 
     community_step = Step(name="route_to_community", executor=route_to_community)
