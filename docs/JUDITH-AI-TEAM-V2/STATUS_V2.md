@@ -62,6 +62,30 @@ A skill Agno carregada nesta sessão (`agents.md`, `teams.md`, `workflows.md`, `
 - **Execution Log** (`orchestration/execution_log.py`): rastro completo por execução, serializável.
 - **Learning loop** (`orchestration/learning_loop.py`): estrutura de proposta, com teste que impede a adição de qualquer função de mutação.
 
+## Agent Foundation V2 — fundação completa
+
+Marco fechado: cada agente tem **conhecimento de ofício + conhecimento do negócio + política do que pode fazer**.
+
+| Camada | Arquivo | O que garante |
+|---|---|---|
+| Craft knowledge | `knowledge/craft/` (11 docs) | conhecimento **geral** de profissão, marcado `GENERAL/REUSABLE` |
+| Knowledge policy | `agents/knowledge_policies.py` | whitelist por agente sobre fatos da Judith |
+| **Capability policy** | `agents/capabilities.py` | o que cada agente pode **fazer**, verificado em código |
+| Tool authorization | `TOOL_REQUIREMENTS` | toda Tool futura declara a capability que exige |
+
+Documentos gerados a partir do código (`scripts/generate_foundation_docs.py`, não editar à mão):
+`AGENT_COMPETENCY_MATRIX.md` · `READINESS_MATRIX.md` · `KNOWLEDGE_GAP_REGISTRY.md`
+
+### Por que Capability Policy existe
+
+"Você nunca dá desconto" é uma frase no prompt — um pedido insistente, um jailbreak ou uma alucinação contornam frase. Não contornam um dict que responde `DENIED`.
+
+Fail-closed em toda porta: agente desconhecido → erro; capability desconhecida → erro; **capability não declarada → `DENIED` por omissão**.
+
+8 capabilities nunca são `ALLOWED` para ninguém: `CHANGE_PRICE`, `GRANT_DISCOUNT`, `GRANT_REFUND`, `CHANGE_POLICY`, `PUBLISH_CONTENT`, `SEND_CAMPAIGN`, `PROMOTE_AGENT_VERSION`, `RENDER_VIDEO`. Há teste que falha se alguém conceder.
+
+Handoff **não transfere privilégio**: `check()` só aceita `agent_id`, `capability` e `human_approved` — não existe parâmetro de delegante, então não há caminho para herdar permissão. E `human_approved` é um booleano do runtime: texto do LLM dizendo "a Judith aprovou" não tem como virar aprovação.
+
 ## Knowledge — 20 de 20 agentes de negócio conectados
 
 Todo agente de negócio consulta documentos reais do repositório sob demanda. `jud` (tira-dúvidas de Agno no WhatsApp) fica fora por não ser agente de negócio.

@@ -213,6 +213,12 @@ CMO_DOCUMENTS: tuple[DocumentSource, ...] = (
         summary="Mapeamento manual de concorrentes.",
         reliability="snapshot",
     ),
+    DocumentSource(
+        key="CRAFT_STRATEGY",
+        title="Craft: objetivo, priorizacao, trade-off e decisao",
+        relative_path="JUDITH-AI-TEAM-V2/knowledge/craft/STRATEGY_CRAFT.md",
+        summary="Conhecimento GERAL de oficio: objetivo, priorizacao, trade-off e decisao. Nao e fato sobre a Bem me Que.",
+    ),
 )
 
 CMO_MISSING_SOURCES: tuple[MissingSource, ...] = (
@@ -351,6 +357,12 @@ BRAND_ARCHITECT_DOCUMENTS: tuple[DocumentSource, ...] = (
         title="AGENT_ROSTER — quem faz o que no time",
         relative_path="JUDITH-AI-TEAM-V2/AGENT_ROSTER.md",
         summary="Os 21 papeis. Use para delegar execucao ao agente certo.",
+    ),
+    DocumentSource(
+        key="CRAFT_BRAND",
+        title="Craft: posicionamento, coerencia e revisao editorial",
+        relative_path="JUDITH-AI-TEAM-V2/knowledge/craft/BRAND_CRAFT.md",
+        summary="Conhecimento GERAL de oficio: posicionamento, coerencia e revisao editorial. Nao e fato sobre a Bem me Que.",
     ),
 )
 

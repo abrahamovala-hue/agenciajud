@@ -54,9 +54,14 @@ def test_pergunta_sobre_kpi_declara_fonte_indisponivel() -> None:
 
 
 def test_busca_sem_correspondencia_nao_devolve_lista_vazia() -> None:
-    """Lista vazia convidaria o modelo a preencher a lacuna sozinho."""
+    """Lista vazia convidaria o modelo a preencher a lacuna sozinho.
 
-    results = search_documents("zzzqqq termo inexistente", CMO_DOCUMENTS)
+    A query precisa ser genuinamente inexistente: a busca casa por SUBSTRING,
+    entao uma palavra comum como "termo" acerta dentro de "meio-termo" e o
+    teste passaria a medir outra coisa.
+    """
+
+    results = search_documents("zzzqqq wxyvbk qqzzxx", CMO_DOCUMENTS)
     assert results and results[0]["status"] == "NENHUM_RESULTADO"
 
 

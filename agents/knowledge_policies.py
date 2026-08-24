@@ -373,6 +373,44 @@ _CATALOG: tuple[DocumentSource, ...] = (
 
 DOCUMENTS: dict[str, DocumentSource] = {source.key: source for source in _CATALOG}
 
+# ---------------------------------------------------------------------------
+# Craft knowledge — conhecimento GERAL de oficio
+#
+# Camada nova na Agent Foundation V2. Ate aqui os agentes so tinham fatos da
+# Judith; nao tinham o oficio. Craft orienta JULGAMENTO profissional e nunca
+# serve como evidencia de afirmacao factual sobre o negocio — claim comercial
+# continua exigindo OFFERS/PRODUCTS.
+# Ver docs/JUDITH-AI-TEAM-V2/knowledge/craft/README.md
+# ---------------------------------------------------------------------------
+
+_CRAFT_DIR = "JUDITH-AI-TEAM-V2/knowledge/craft"
+
+_CRAFT: tuple[DocumentSource, ...] = tuple(
+    DocumentSource(
+        key=f"CRAFT_{nome}",
+        title=f"Craft: {titulo}",
+        relative_path=f"{_CRAFT_DIR}/{nome}_CRAFT.md",
+        summary=f"Conhecimento GERAL de oficio: {titulo}. Nao e fato sobre a Bem me Que.",
+    )
+    for nome, titulo in (
+        ("SHORTFORM", "atencao, hook, retencao e estrutura de video curto"),
+        ("COPY", "legenda, legibilidade, CTA e copy educativa"),
+        ("BRAND", "posicionamento, coerencia e revisao editorial"),
+        ("CONVERSATION", "descoberta, objecao, suporte, de-escalation e roteamento"),
+        ("OFFER_FUNNEL", "design de oferta, precificacao, funil e friccao"),
+        ("ANALYTICS", "KPI, funil, coorte, atribuicao e variancia"),
+        ("RESEARCH", "pesquisa qualitativa, sinal vs ruido e tendencia"),
+        ("VISUAL", "hierarquia, composicao, legibilidade e continuidade"),
+        ("STRATEGY", "objetivo, priorizacao, trade-off e decisao"),
+        ("KNOWLEDGE_GOVERNANCE", "proveniencia, frescor, conflito e versionamento"),
+        ("EVALUATION", "rubrica, gold set, regressao e taxonomia de falha"),
+    )
+)
+
+DOCUMENTS.update({source.key: source for source in _CRAFT})
+
+
+
 # As fichas V2 sao geradas a partir do disco, nao de uma lista escrita a mao:
 # assim o catalogo nunca promete uma ficha que nao existe.
 _FICHAS_DIR = DOCS_ROOT / "JUDITH-AI-TEAM-V2" / "agents"
@@ -532,104 +570,122 @@ _POLICIES: tuple[AgentKnowledgePolicy, ...] = (
     _policy(
         "marketing-director",
         ("BRAND", "AUDIENCE", "PRODUCTS", "OFFERS", "CONTENT_PILLARS", "PLAYBOOK_MARKETING_DIRECTOR",
-         "WORKFLOW_CREATE_CAMPAIGN", "WORKFLOWS_V1", "BUSINESS_RULES", "AGENT_ROSTER"),
+         "WORKFLOW_CREATE_CAMPAIGN", "WORKFLOWS_V1", "BUSINESS_RULES", "AGENT_ROSTER")
+        + ("CRAFT_STRATEGY", "CRAFT_OFFER_FUNNEL", "CRAFT_ANALYTICS",),
         ("CALENDARIO_EDITORIAL", "HISTORICO_POSTS", "METRICAS_INSTAGRAM", "VENDAS_KIWIFY", "DECISOES_ESTRATEGICAS"),
     ),
     _policy(
         "social-media-manager",
         ("BRAND", "VOICE", "AUDIENCE", "CONTENT_PILLARS", "PLAYBOOK_SOCIAL", "INSTAGRAM_AUDIT",
-         "WORKFLOWS_V1", "BUSINESS_RULES", "AGENT_ROSTER"),
+         "WORKFLOWS_V1", "BUSINESS_RULES", "AGENT_ROSTER")
+        + ("CRAFT_COPY", "CRAFT_SHORTFORM", "CRAFT_ANALYTICS",),
         ("CALENDARIO_EDITORIAL", "HISTORICO_POSTS", "METRICAS_INSTAGRAM", "TENDENCIAS_ATUAIS"),
     ),
     _policy(
         "market-trend-intelligence",
         ("AUDIENCE", "CONTENT_PILLARS", "PRODUCTS", "COMPETITORS", "INSTAGRAM_AUDIT", "WEBSITE_AUDIT",
-         "PLAYBOOK_TREND", "PLAYBOOK_VIRAL", "BUSINESS_RULES"),
+         "PLAYBOOK_TREND", "PLAYBOOK_VIRAL", "BUSINESS_RULES")
+        + ("CRAFT_RESEARCH",),
         ("TENDENCIAS_ATUAIS", "METRICAS_INSTAGRAM", "HISTORICO_POSTS"),
     ),
     _policy(
         "hook-finder",
-        ("VOICE", "AUDIENCE", "CONTENT_PILLARS", "PLAYBOOK_HOOK", "COMMENTS_FAQ", "BUSINESS_RULES"),
+        ("VOICE", "AUDIENCE", "CONTENT_PILLARS", "PLAYBOOK_HOOK", "COMMENTS_FAQ", "BUSINESS_RULES")
+        + ("CRAFT_SHORTFORM",),
         ("METRICAS_INSTAGRAM", "EXEMPLOS_APROVADOS", "HISTORICO_POSTS", "TENDENCIAS_ATUAIS"),
     ),
     _policy(
         "script-writer",
         ("BRAND", "VOICE", "AUDIENCE", "CONTENT_PILLARS", "PRODUCTS", "OFFERS", "PLAYBOOK_SCRIPT",
-         "WORKFLOW_CREATE_REEL", "BUSINESS_RULES"),
+         "WORKFLOW_CREATE_REEL", "BUSINESS_RULES")
+        + ("CRAFT_SHORTFORM", "CRAFT_COPY",),
         ("EXEMPLOS_APROVADOS", "HISTORICO_POSTS"),
     ),
     _policy(
         "caption-writer",
         ("BRAND", "VOICE", "AUDIENCE", "CONTENT_PILLARS", "PRODUCTS", "OFFERS", "PLAYBOOK_CAPTION",
-         "COMMENTS_FAQ", "BUSINESS_RULES"),
+         "COMMENTS_FAQ", "BUSINESS_RULES")
+        + ("CRAFT_COPY",),
         ("EXEMPLOS_APROVADOS", "HISTORICO_POSTS"),
     ),
     _policy(
         "visual-creative",
-        ("BRAND", "VISUAL_IDENTITY", "CONTENT_PILLARS", "PLAYBOOK_VISUAL", "PRODUCTS", "BUSINESS_RULES"),
+        ("BRAND", "VISUAL_IDENTITY", "CONTENT_PILLARS", "PLAYBOOK_VISUAL", "PRODUCTS", "BUSINESS_RULES")
+        + ("CRAFT_VISUAL",),
         ("EXEMPLOS_APROVADOS",),
     ),
     _policy(
         "video-editor",
         ("BRAND", "VOICE", "VISUAL_IDENTITY", "VIDEO_ENGINE_PLAN", "VIDEO_EDIT_SPEC", "PLAYBOOK_VIDEO",
-         "CONTENT_PILLARS", "BUSINESS_RULES"),
+         "CONTENT_PILLARS", "BUSINESS_RULES")
+        + ("CRAFT_VISUAL", "CRAFT_SHORTFORM",),
         ("EXEMPLOS_APROVADOS", "METRICAS_INSTAGRAM"),
     ),
     _policy(
         "offer-funnel-strategist",
         ("PRODUCTS", "OFFERS", "AUDIENCE", "BRAND", "WEBSITE_AUDIT", "PRODUCT_PAGES_AUDIT", "COMMENTS_FAQ",
-         "PLAYBOOK_PRODUCT_MARKETING", "BUSINESS_RULES"),
+         "PLAYBOOK_PRODUCT_MARKETING", "BUSINESS_RULES")
+        + ("CRAFT_OFFER_FUNNEL", "CRAFT_ANALYTICS",),
         ("VENDAS_KIWIFY", "METRICAS_INSTAGRAM", "CRM_PIPELINE", "HISTORICO_DM"),
     ),
     _policy(
         "sales-conversion-agent",
-        ("PRODUCTS", "OFFERS", "AUDIENCE", "VOICE", "COMMENTS_FAQ", "WEBSITE_AUDIT", "BUSINESS_RULES"),
+        ("PRODUCTS", "OFFERS", "AUDIENCE", "VOICE", "COMMENTS_FAQ", "WEBSITE_AUDIT", "BUSINESS_RULES")
+        + ("CRAFT_CONVERSATION",),
         ("VENDAS_KIWIFY", "CRM_PIPELINE", "HISTORICO_DM"),
     ),
     _policy(
         "crm-lifecycle-agent",
-        ("PRODUCTS", "OFFERS", "AUDIENCE", "VOICE", "BUSINESS_RULES", "COLLABORATION_PROTOCOL_V2"),
+        ("PRODUCTS", "OFFERS", "AUDIENCE", "VOICE", "BUSINESS_RULES", "COLLABORATION_PROTOCOL_V2")
+        + ("CRAFT_CONVERSATION",),
         ("CRM_PIPELINE", "VENDAS_KIWIFY", "HISTORICO_DM"),
     ),
     _policy(
         "community-dm-agent",
         ("BRAND", "VOICE", "AUDIENCE", "PRODUCTS", "OFFERS", "COMMENTS_FAQ", "AGENT_ROSTER",
-         "COLLABORATION_PROTOCOL_V2", "BUSINESS_RULES"),
+         "COLLABORATION_PROTOCOL_V2", "BUSINESS_RULES")
+        + ("CRAFT_CONVERSATION",),
         ("HISTORICO_DM", "EXEMPLOS_APROVADOS"),
     ),
     _policy(
         "customer-support-agent",
         ("PRODUCTS", "OFFERS", "COMMENTS_FAQ", "WEBSITE_AUDIT", "VOICE", "BUSINESS_RULES",
-         "COLLABORATION_PROTOCOL_V2"),
+         "COLLABORATION_PROTOCOL_V2")
+        + ("CRAFT_CONVERSATION",),
         ("CASOS_SUPORTE", "VENDAS_KIWIFY", "CRM_PIPELINE"),
     ),
     _policy(
         "analytics-bi-agent",
         ("PLAYBOOK_METRICS", "INSTAGRAM_AUDIT", "WEBSITE_AUDIT", "PRODUCT_PAGES_AUDIT", "PRODUCTS", "OFFERS",
-         "CONTENT_PILLARS", "STATUS_V2", "BUSINESS_RULES"),
+         "CONTENT_PILLARS", "STATUS_V2", "BUSINESS_RULES")
+        + ("CRAFT_ANALYTICS",),
         ("METRICAS_INSTAGRAM", "VENDAS_KIWIFY", "CRM_PIPELINE", "DATA_DICTIONARY", "HISTORICO_POSTS"),
     ),
     _policy(
         "customer-insights-agent",
-        ("AUDIENCE", "COMMENTS_FAQ", "PRODUCTS", "COMPETITORS", "WEBSITE_AUDIT", "BUSINESS_RULES"),
+        ("AUDIENCE", "COMMENTS_FAQ", "PRODUCTS", "COMPETITORS", "WEBSITE_AUDIT", "BUSINESS_RULES")
+        + ("CRAFT_RESEARCH",),
         ("HISTORICO_DM", "VENDAS_KIWIFY", "CRM_PIPELINE"),
     ),
     _policy(
         "knowledge-manager",
-        _KNOWLEDGE_GOVERNANCE_DOCS + tuple(source.key for source in AGENT_FICHAS),
+        _KNOWLEDGE_GOVERNANCE_DOCS + tuple(source.key for source in AGENT_FICHAS)
+        + ("CRAFT_KNOWLEDGE_GOVERNANCE",),
         ("DECISOES_ESTRATEGICAS", "EXEMPLOS_APROVADOS", "METRICAS_INSTAGRAM", "VENDAS_KIWIFY"),
     ),
     _policy(
         "ai-performance-evals-agent",
         ("EVALS_README", "LEARNING_EVALS_MODEL", "AUTONOMY_MODEL", "ORCHESTRATION_V2", "HANDOFF_CONTRACT",
          "HANDOFF_EXAMPLES", "STATUS_V2", "AGENT_ROSTER", "BUSINESS_RULES")
-        + tuple(source.key for source in AGENT_FICHAS),
+        + tuple(source.key for source in AGENT_FICHAS)
+        + ("CRAFT_EVALUATION",),
         ("GOLD_DATASET", "METRICAS_INSTAGRAM", "EXEMPLOS_APROVADOS", "HISTORICO_POSTS"),
     ),
     _policy(
         "brand-reviewer",
         ("BRAND", "VOICE", "AUDIENCE", "CONTENT_PILLARS", "VISUAL_IDENTITY", "PRODUCTS", "OFFERS",
-         "PLAYBOOK_BRAND_REVIEW", "BUSINESS_RULES", "COLLABORATION_PROTOCOL_V1"),
+         "PLAYBOOK_BRAND_REVIEW", "BUSINESS_RULES", "COLLABORATION_PROTOCOL_V1")
+        + ("CRAFT_BRAND", "CRAFT_COPY",),
         ("EXEMPLOS_APROVADOS", "METRICAS_INSTAGRAM"),
     ),
 )
