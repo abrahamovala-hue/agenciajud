@@ -20,6 +20,28 @@ from utils.validate_envs import validate_envs
 
 validate_envs()
 
+from agents.judith_team import (
+    ai_performance_evals_agent,
+    analytics_bi_agent,
+    brand_architect,
+    brand_reviewer,
+    caption_writer,
+    cmo,
+    community_dm_agent,
+    crm_lifecycle_agent,
+    customer_insights_agent,
+    customer_support_agent,
+    hook_finder,
+    knowledge_manager,
+    market_trend_intelligence,
+    marketing_director,
+    offer_funnel_strategist,
+    sales_conversion_agent,
+    script_writer,
+    social_media_manager,
+    video_editor,
+    visual_creative,
+)
 from agents.my_agent import my_agent  # noqa: E402
 from app.interfaces import build_interfaces  # noqa: E402
 from db import get_postgres_db, repair_agentos_db_schema  # noqa: E402
@@ -54,7 +76,29 @@ agent_os = AgentOS(
     scheduler=True,
     base_app=base_app,
     db=agentos_db,
-    agents=[my_agent],
+    agents=[
+        my_agent,
+        cmo,
+        brand_architect,
+        marketing_director,
+        social_media_manager,
+        market_trend_intelligence,
+        hook_finder,
+        script_writer,
+        caption_writer,
+        visual_creative,
+        video_editor,
+        offer_funnel_strategist,
+        sales_conversion_agent,
+        crm_lifecycle_agent,
+        community_dm_agent,
+        customer_support_agent,
+        analytics_bi_agent,
+        customer_insights_agent,
+        knowledge_manager,
+        ai_performance_evals_agent,
+        brand_reviewer,
+    ],
     interfaces=build_interfaces(my_agent),
     config=str(Path(__file__).parent / "config.yaml"),
 )

@@ -1,0 +1,65 @@
+{
+  "project": {
+    "id": "sample-reel-001",
+    "title": "Chocolate Ruby — Amostra V1",
+    "format": "vertical",
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "duration": 9
+  },
+  "assets": {
+    "videos": [],
+    "images": [
+      { "id": "bg-hook", "source": "#2A1810", "type": "image" },
+      { "id": "bg-educacao", "source": "#F5E6D3", "type": "image" },
+      { "id": "bg-cta", "source": "#D4AF37", "type": "image" }
+    ],
+    "audio": []
+  },
+  "timeline": [
+    { "id": "seg-hook", "assetId": "bg-hook", "start": 0, "end": 3 },
+    { "id": "seg-educacao", "assetId": "bg-educacao", "start": 3, "end": 7 },
+    { "id": "seg-cta", "assetId": "bg-cta", "start": 7, "end": 9 }
+  ],
+  "overlays": [
+    {
+      "id": "hook-text",
+      "text": "Esse chocolate é ROSA e é real...",
+      "start": 0,
+      "end": 3,
+      "position": "center",
+      "style": { "fontSize": 64, "color": "#F5E6D3", "fontWeight": "bold" },
+      "animation": "fade"
+    },
+    {
+      "id": "educacao-text",
+      "text": "Fermentação natural. Sem corantes.",
+      "start": 3.2,
+      "end": 6.8,
+      "position": "center",
+      "style": { "fontSize": 48, "color": "#2A1810" },
+      "animation": "slide-up"
+    }
+  ],
+  "captions": {
+    "enabled": true,
+    "segments": [
+      { "start": 0, "end": 3, "text": "Esse chocolate é rosa e é real." },
+      { "start": 3, "end": 7, "text": "A técnica de fermentação que faz surgir a cor, sem corantes." },
+      { "start": 7, "end": 9, "text": "Experimente. Link na bio." }
+    ]
+  },
+  "music": [],
+  "cta": {
+    "text": "Link na bio 🍫",
+    "start": 7,
+    "end": 9
+  },
+  "export": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "codec": "h264"
+  }
+}

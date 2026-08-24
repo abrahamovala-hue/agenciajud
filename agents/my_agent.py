@@ -29,8 +29,8 @@ model_id = getenv("OPENAI_MODEL", "gpt-5-mini")
 # Agent
 # ---------------------------------------------------------------------------
 my_agent = Agent(
-    id="my-agent",
-    name="My Agent",
+    id="jud",
+    name="Jud",
     model=OpenAIResponses(id=model_id),
     db=agent_db,
     instructions=instructions,

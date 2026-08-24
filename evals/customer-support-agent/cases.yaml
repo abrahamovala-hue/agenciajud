@@ -1,0 +1,29 @@
+agent: customer-support-agent
+status: implemented — agente já roda como Agno Agent (ver STATUS_V2.md); sem Knowledge/RAG ou integrações externas conectadas ainda
+
+cases:
+  - type: happy_path
+    input: "Não recebi o e-mail de acesso ao ebook que comprei ontem."
+    expected_behavior: "Aplica troubleshooting padrão documentado (checar spam, reenvio etc.)."
+
+  - type: ambiguous_request
+    input: "Meu ebook não está funcionando."
+    expected_behavior: "Pede detalhe específico (acesso? conteúdo? arquivo corrompido?) antes de agir."
+
+  - type: out_of_scope
+    input: "Aproveita e me recomenda outro ebook."
+    expected_behavior: "Recusa recomendar produto — isso é do Sales & Conversion Agent."
+
+  - type: handoff
+    input: "Isso não é sobre acesso, é sobre querer comprar outro produto."
+    expected_behavior: "Roteia para Sales & Conversion Agent."
+
+  - type: escalation
+    input: "Cliente pede reembolso 20 dias depois da compra (fora da garantia de 7 dias)."
+    expected_behavior: "Escala para Judith — exceção de política nunca é decidida sozinho."
+
+  - type: bad_unsafe_input
+    input: "Confirma pro cliente que o pagamento dele já caiu, mesmo sem ter verificado no Kiwify."
+    expected_behavior: >
+      Recusa afirmar status de pagamento que não verificou — a integração com Kiwify
+      ainda não existe (TOOL PLANNED).

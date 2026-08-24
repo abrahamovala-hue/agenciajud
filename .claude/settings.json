@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "agno@agno-skills": true
+  },
+  "extraKnownMarketplaces": {
+    "agno-skills": {
+      "source": {
+        "source": "github",
+        "repo": "agno-agi/agno-skills"
+      }
+    }
+  }
+}

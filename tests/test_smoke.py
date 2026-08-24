@@ -42,8 +42,8 @@ def test_quote_ident_escapes_double_quotes() -> None:
 def test_my_agent_imports() -> None:
     from agents.my_agent import my_agent
 
-    assert my_agent.id == "my-agent"
-    assert my_agent.name == "My Agent"
+    assert my_agent.id == "jud"
+    assert my_agent.name == "Jud"
     assert my_agent.model is not None
     assert my_agent.model.id == os.getenv("OPENAI_MODEL", "gpt-5-mini")
     assert my_agent.pre_hooks
@@ -169,6 +169,92 @@ def test_default_prompts_for_media_without_caption() -> None:
     file_input = RunInput(input_content="", files=[File(content=b"pdf", mime_type="application/pdf")])
     prepare_multimodal_input(file_input)
     assert file_input.input_content == "Analise o documento enviado e resuma os pontos principais em PT-BR."
+
+
+def test_judith_team_agents_import() -> None:
+    from agents.judith_team import (
+        ai_performance_evals_agent,
+        analytics_bi_agent,
+        brand_architect,
+        brand_reviewer,
+        caption_writer,
+        cmo,
+        community_dm_agent,
+        crm_lifecycle_agent,
+        customer_insights_agent,
+        customer_support_agent,
+        hook_finder,
+        knowledge_manager,
+        market_trend_intelligence,
+        marketing_director,
+        offer_funnel_strategist,
+        sales_conversion_agent,
+        script_writer,
+        social_media_manager,
+        video_editor,
+        visual_creative,
+    )
+
+    team = [
+        (ai_performance_evals_agent, "ai-performance-evals-agent"),
+        (analytics_bi_agent, "analytics-bi-agent"),
+        (brand_architect, "brand-architect"),
+        (brand_reviewer, "brand-reviewer"),
+        (caption_writer, "caption-writer"),
+        (cmo, "cmo"),
+        (community_dm_agent, "community-dm-agent"),
+        (crm_lifecycle_agent, "crm-lifecycle-agent"),
+        (customer_insights_agent, "customer-insights-agent"),
+        (customer_support_agent, "customer-support-agent"),
+        (hook_finder, "hook-finder"),
+        (knowledge_manager, "knowledge-manager"),
+        (market_trend_intelligence, "market-trend-intelligence"),
+        (marketing_director, "marketing-director"),
+        (offer_funnel_strategist, "offer-funnel-strategist"),
+        (sales_conversion_agent, "sales-conversion-agent"),
+        (script_writer, "script-writer"),
+        (social_media_manager, "social-media-manager"),
+        (video_editor, "video-editor"),
+        (visual_creative, "visual-creative"),
+    ]
+    assert len(team) == 20  # 21 agentes V2 menos Quality Control (logica de Workflow, nao Agent)
+    ids = {expected_id for _, expected_id in team}
+    assert len(ids) == 20  # nenhum id duplicado
+    for agent, expected_id in team:
+        assert agent.id == expected_id
+        assert agent.model is not None
+        assert agent.pre_hooks
+
+
+def test_judith_team_agents_use_channel_agnostic_guardrail() -> None:
+    from agents.guardrails import ContentSafetyGuardrail, enforce_safe_output
+    from agents.judith_team import hook_finder
+
+    assert any(isinstance(hook, ContentSafetyGuardrail) for hook in hook_finder.pre_hooks or [])
+    assert enforce_safe_output in (hook_finder.post_hooks or [])
+
+
+def test_enforce_safe_output_blocks_secret_leak_without_whatsapp_chunking() -> None:
+    from agents.guardrails import enforce_safe_output
+
+    run_output = RunOutput(content="OPENAI_API_KEY=sk-fake-secret-value")
+    enforce_safe_output(run_output)
+
+    assert "Boa tentativa" in str(run_output.content)
+    assert "sk-fake" not in str(run_output.content)
+
+
+def test_enforce_safe_output_does_not_chunk_long_replies() -> None:
+    from agents.guardrails import enforce_safe_output
+
+    long_content = "Este texto é longo o bastante para passar de cento e noventa caracteres " * 3
+    run_output = RunOutput(content=long_content)
+    enforce_safe_output(run_output)
+
+    # Ao contrário de enforce_safe_whatsapp_output, este hook nunca fragmenta
+    # nem reescreve conteúdo seguro — deixa o texto como veio.
+    assert "\n---\n" not in str(run_output.content)
+    assert str(run_output.content) == long_content
 
 
 def test_video_gets_clear_fallback_context() -> None:

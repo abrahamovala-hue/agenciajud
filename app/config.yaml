@@ -1,6 +1,6 @@
 chat:
   quick_prompts:
-    my-agent:
+    jud:
       - "Oi! Se apresenta rapido pra mim."
       - "O que voce consegue fazer?"
       - "Me manda um audio no WhatsApp que eu transcrevo."

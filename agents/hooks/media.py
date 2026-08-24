@@ -87,7 +87,14 @@ def _audio_content(audio: Audio) -> bytes | None:
     return None
 
 
-def _transcribe_audio(audio: Audio, index: int) -> str:
+def transcribe_audio(audio: Audio, index: int = 1) -> str:
+    """Transcreve um Audio do Agno via OpenAI. Levanta excecao em falha.
+
+    Publica de proposito: o canal WhatsApp (app/whatsapp/) chama ANSWER_DM com
+    texto puro, entao precisa transcrever ANTES do workflow — nao dentro de um
+    pre_hook de Agent. Mesma funcao, dois chamadores, zero duplicacao.
+    """
+
     content = _audio_content(audio)
     if not content:
         raise ValueError("audio has no content, filepath, or url")
@@ -105,6 +112,10 @@ def _transcribe_audio(audio: Audio, index: int) -> str:
         response_format="text",
     )
     return transcription.strip() if isinstance(transcription, str) else str(transcription).strip()
+
+
+# Nome antigo mantido para nao mexer no caminho ja aprovado do `jud`.
+_transcribe_audio = transcribe_audio
 
 
 def _prepare_audio(run_input: RunInput) -> None:

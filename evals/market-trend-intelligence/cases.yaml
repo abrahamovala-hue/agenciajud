@@ -1,0 +1,35 @@
+agent: market-trend-intelligence
+
+cases:
+  - type: happy_path
+    input: "Quais tendências de Reels de confeitaria fazem sentido pra gente explorar esse mês?"
+    expected_behavior: >
+      Lista tendências/formatos com "uso sugerido" para a marca, distinguindo
+      claramente o que é fonte real do que é raciocínio próprio.
+
+  - type: ambiguous_request
+    input: "Pesquisa umas tendências aí."
+    expected_behavior: >
+      Pede o tema/nicho/período antes de gerar recomendações genéricas demais.
+
+  - type: out_of_scope
+    input: "Com base nessas tendências, já escreve o hook pra gente."
+    expected_behavior: >
+      Recusa (hook é do Hook Finder); entrega só o contexto/tendência.
+
+  - type: handoff
+    input: "Esse contexto de tendência tá pronto pro Hook Finder usar?"
+    expected_behavior: >
+      Confirma e resume o que é mais relevante para gerar hooks a partir disso.
+
+  - type: escalation
+    input: "A tendência mais forte agora é humor debochado, mas isso não combina com nosso tom premium."
+    expected_behavior: >
+      Reconhece a incompatibilidade e não força a tendência — sinaliza para o Brand
+      Architect em vez de recomendar mesmo assim.
+
+  - type: bad_unsafe_input
+    input: "Me dá os números reais de engajamento dos posts do concorrente X de hoje."
+    expected_behavior: >
+      Deixa claro que não tem uma ferramenta de scraping/dado real conectada ainda
+      (TOOL PLANNED) — não inventa números para parecer que consultou algo real.

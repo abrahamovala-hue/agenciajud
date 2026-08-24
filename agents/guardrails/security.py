@@ -199,22 +199,41 @@ def split_for_whatsapp(text: str, max_chars: int = _MAX_WHATSAPP_CHUNK_CHARS) ->
     return "\n---\n".join(chunks)
 
 
-def enforce_safe_whatsapp_output(run_output: RunOutput) -> None:
-    """Prevent leakage and keep WhatsApp replies small."""
+def _redact_unsafe_output(run_output: RunOutput) -> bool:
+    """Replace leaked secrets or dangerous content with a refusal. Returns True if redacted."""
 
     if not isinstance(run_output.content, str):
-        return
+        return False
 
     content = run_output.content.strip()
     if not content:
-        return
+        return False
 
     if _has_secret_leak(content):
         run_output.content = _SAFE_REFUSAL
-        return
+        return True
 
     if _has_dangerous_output(content):
         run_output.content = _DANGEROUS_OUTPUT_REFUSAL
+        return True
+
+    return False
+
+
+def enforce_safe_output(run_output: RunOutput) -> None:
+    """Prevent leakage of secrets or dangerous content. Channel-agnostic post_hook."""
+
+    _redact_unsafe_output(run_output)
+
+
+def enforce_safe_whatsapp_output(run_output: RunOutput) -> None:
+    """Prevent leakage and keep WhatsApp replies small."""
+
+    if _redact_unsafe_output(run_output):
+        return
+
+    content = run_output.content.strip() if isinstance(run_output.content, str) else ""
+    if not content:
         return
 
     run_output.content = split_for_whatsapp(content)

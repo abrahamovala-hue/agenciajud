@@ -6,9 +6,10 @@ from os import getenv
 from typing import Any
 
 from agno.os.interfaces.base import BaseInterface
+from agno.os.interfaces.whatsapp import Whatsapp
 from agno.os.interfaces.whatsapp import router as whatsapp_router
 from agno.os.interfaces.whatsapp.helpers import send_whatsapp_message_async as _send_whatsapp_message_async
-from agno.os.interfaces.whatsapp import Whatsapp
+from agno.utils.log import log_warning
 
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 _PLACEHOLDER_PREFIXES = ("your ",)
@@ -76,8 +77,25 @@ def build_interfaces(agent: Any) -> list[BaseInterface]:
 
     _patch_whatsapp_chunk_sender()
 
-    return [
-        Whatsapp(
-            agent=agent,
+    # DEFAULT SEGURO: a mensagem da cliente entra no workflow ANSWER_DM, onde
+    # moram o roteamento por intencao e o Evidence Gate. Qualquer valor que
+    # nao seja explicitamente truthy cai aqui (fail-closed).
+    #
+    # WHATSAPP_ROUTE_TO_AGENT=true e DEBUG/LEGACY: volta ao comportamento
+    # original do starter, com um Agent unico atendendo direto. Nesse modo a
+    # mensagem NAO passa pelo ANSWER_DM nem pelo Evidence Gate — ou seja,
+    # afirmacao sobre preco, oferta ou politica pode sair sem fonte
+    # verificada. Nunca use no fluxo normal de producao.
+    if _is_enabled("WHATSAPP_ROUTE_TO_AGENT"):
+        # O bypass jamais e silencioso: se alguem ligar isso em producao por
+        # engano, o log grita.
+        log_warning(
+            "WHATSAPP_ROUTE_TO_AGENT=true — modo DEBUG/LEGACY ativo. As mensagens vao "
+            "direto para um Agent unico e NAO passam pelo ANSWER_DM nem pelo Evidence "
+            "Gate. Nao use em producao."
         )
-    ]
+        return [Whatsapp(agent=agent)]
+
+    from app.whatsapp import AnswerDmWhatsapp
+
+    return [AnswerDmWhatsapp()]
