@@ -52,7 +52,17 @@ def _get_cors_allow_origins() -> list[str]:
     return [origin.strip().rstrip("/") for origin in getenv("CORS_ALLOW_ORIGINS", "").split(",") if origin.strip()]
 
 
-base_app = FastAPI(title="AgentOS")
+api_settings = build_api_settings()
+
+# `docs_enabled` do Agno so tem efeito quando o AgentOS cria o proprio FastAPI
+# (agno/os/app.py:527). Como passamos um `base_app` pronto, quem decide sobre
+# /docs, /redoc e /openapi.json e este construtor — nao o AgentOS.
+base_app = FastAPI(
+    title="AgentOS",
+    docs_url="/docs" if api_settings.docs_enabled else None,
+    redoc_url="/redoc" if api_settings.docs_enabled else None,
+    openapi_url="/openapi.json" if api_settings.docs_enabled else None,
+)
 
 cors_allow_origins = _get_cors_allow_origins()
 if cors_allow_origins:
@@ -104,7 +114,7 @@ agent_os = AgentOS(
     config=str(Path(__file__).parent / "config.yaml"),
     # Autenticacao Bearer nativa do Agno nos routers administrativos. Ver
     # app/security.py para o recorte do que continua publico e por que.
-    settings=build_api_settings(),
+    settings=api_settings,
 )
 
 app = agent_os.get_app()

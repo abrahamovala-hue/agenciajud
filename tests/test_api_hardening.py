@@ -48,6 +48,34 @@ def _build_os(security_key: str | None, *, with_whatsapp: bool, production: bool
     )
 
 
+def _build_os_with_base_app(security_key: str | None, *, production: bool) -> AgentOS:
+    """Igual ao `app/main.py`: AgentOS montado sobre um FastAPI ja existente.
+
+    Este caminho e diferente do `_build_os`: com `base_app`, o `docs_enabled`
+    do Agno nao tem efeito (agno/os/app.py:527 so roda quando o AgentOS cria o
+    proprio FastAPI). Quem precisa desligar /docs e o construtor do base_app.
+    """
+
+    from fastapi import FastAPI
+
+    docs_enabled = not production
+    base_app = FastAPI(
+        title="AgentOS",
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
+    agent = Agent(id="probe-agent", name="Probe", db=InMemoryDb())
+    return AgentOS(
+        name="AgentOS",
+        base_app=base_app,
+        db=InMemoryDb(),
+        agents=[agent],
+        interfaces=[Whatsapp(agent=agent)],
+        settings=AgnoAPISettings(os_security_key=security_key, docs_enabled=docs_enabled),
+    )
+
+
 def _auth_dependency_present(route) -> bool:
     """Percorre a arvore de dependencias da rota atras da auth do Agno.
 
@@ -318,3 +346,40 @@ def test_docs_seguem_disponiveis_em_dev() -> None:
     client = TestClient(agent_os.get_app())
 
     assert client.get("/openapi.json").status_code == 200
+
+
+# --- 7. Montagem real: AgentOS sobre base_app (como em app/main.py) ----------
+
+
+def test_com_base_app_docs_somem_em_producao() -> None:
+    """Regressao: a primeira versao passava `docs_enabled` so ao AgentOS.
+
+    Com `base_app`, o Agno ignora esse flag e /docs, /redoc e /openapi.json
+    continuavam 200 em producao. Foi pego verificando o deploy real, nao aqui —
+    este teste existe para que nao volte a passar despercebido.
+    """
+
+    client = TestClient(_build_os_with_base_app(VALID_KEY, production=True).get_app())
+
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 404, f"{path} continua exposto com base_app"
+
+
+def test_com_base_app_docs_ficam_em_dev() -> None:
+    client = TestClient(_build_os_with_base_app(None, production=False).get_app())
+
+    assert client.get("/openapi.json").status_code == 200
+
+
+def test_com_base_app_admin_continua_protegido() -> None:
+    client = TestClient(_build_os_with_base_app(VALID_KEY, production=True).get_app())
+
+    assert client.get("/agents").status_code == 401
+    assert client.get("/agents", headers={"Authorization": f"Bearer {VALID_KEY}"}).status_code == 200
+
+
+def test_com_base_app_health_e_whatsapp_seguem_publicos() -> None:
+    client = TestClient(_build_os_with_base_app(VALID_KEY, production=True).get_app())
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/whatsapp/status").status_code == 200
