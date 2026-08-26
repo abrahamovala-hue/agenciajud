@@ -51,10 +51,11 @@ from agno.os.interfaces.whatsapp.helpers import (
 )
 from agno.os.interfaces.whatsapp.security import validate_webhook_signature
 from agno.utils.log import log_error, log_info, log_warning
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from agents.hooks.media import transcribe_audio
+from app.security import build_api_settings, build_auth_dependency
 from app.whatsapp.policy import ResponsePlan, decide_output_mode, fallback_to_text
 from app.whatsapp.speech import SynthesizedAudio, synthesize
 from orchestration.workflows.answer_dm import run_answer_dm
@@ -279,7 +280,19 @@ class AnswerDmWhatsapp(BaseInterface):
 
 
 def attach_answer_dm_routes(router: APIRouter, config: WhatsAppConfig) -> APIRouter:
-    @router.get("/status", operation_id="whatsapp_status_answer_dm")
+    # F0.5: `/status` nao serve a Meta — so a humano e a UI do AgentOS. Sai da
+    # superficie anonima e passa a exigir Bearer, usando a MESMA dependencia
+    # nativa do Agno que protege os routers administrativos. As duas rotas de
+    # `/webhook` abaixo continuam publicas de proposito: e por elas que a Meta
+    # entra, e cada uma tem seu proprio controle (verify_token no GET, HMAC no
+    # POST).
+    auth_dependency = build_auth_dependency(build_api_settings())
+
+    @router.get(
+        "/status",
+        operation_id="whatsapp_status_answer_dm",
+        dependencies=[Depends(auth_dependency)],
+    )
     async def status() -> dict[str, str]:
         return {"status": "available", "workflow": WORKFLOW}
 

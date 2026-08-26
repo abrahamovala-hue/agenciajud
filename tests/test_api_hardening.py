@@ -4,7 +4,8 @@ API Hardening (F0.1) — a superficie publica do AgentOS.
 Contrato coberto aqui:
 
 1. Em producao a chave e OBRIGATORIA (fail-closed no boot).
-2. Com a chave ligada, so o allowlist continua anonimo.
+2. Com a chave ligada, a superficie anonima e EXATAMENTE o allowlist:
+   /health e /whatsapp/webhook. Nada mais (F0.5).
 3. Rota administrativa sem Bearer -> 401; com Bearer certo -> passa.
 4. Header encaminhado (X-Forwarded-*) NUNCA autentica.
 5. /docs, /redoc e /openapi.json somem em producao.
@@ -25,7 +26,12 @@ from agno.os.settings import AgnoAPISettings
 from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
 
-from app.security import MIN_SECURITY_KEY_LENGTH, PUBLIC_PATH_ALLOWLIST, build_api_settings
+from app.security import (
+    MIN_SECURITY_KEY_LENGTH,
+    PUBLIC_PATH_ALLOWLIST,
+    build_api_settings,
+    install_authenticated_metadata_routes,
+)
 
 VALID_KEY = "k" * MIN_SECURITY_KEY_LENGTH
 RAILWAY_MARKERS = ("RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_NAME", "RAILWAY_PROJECT_ID")
@@ -48,32 +54,41 @@ def _build_os(security_key: str | None, *, with_whatsapp: bool, production: bool
     )
 
 
-def _build_os_with_base_app(security_key: str | None, *, production: bool) -> AgentOS:
-    """Igual ao `app/main.py`: AgentOS montado sobre um FastAPI ja existente.
+def _build_os_like_main() -> AgentOS:
+    """Monta o AgentOS EXATAMENTE como o `app/main.py` — sem Postgres.
 
-    Este caminho e diferente do `_build_os`: com `base_app`, o `docs_enabled`
-    do Agno nao tem efeito (agno/os/app.py:527 so roda quando o AgentOS cria o
-    proprio FastAPI). Quem precisa desligar /docs e o construtor do base_app.
+    Fidelidade importa aqui. A primeira versao da F0.1 passou nos testes e
+    ainda assim deixou /docs aberto em producao, porque o teste montava o
+    AgentOS sem `base_app` e producao montava com. Este helper reusa as
+    mesmas funcoes de producao (`build_api_settings`,
+    `install_authenticated_metadata_routes`, `AnswerDmWhatsapp`) e le o
+    ambiente do mesmo jeito, entao nao ha um segundo "quase igual" para
+    divergir.
     """
 
     from fastapi import FastAPI
 
-    docs_enabled = not production
+    from app.whatsapp import AnswerDmWhatsapp
+
+    api_settings = build_api_settings()
     base_app = FastAPI(
         title="AgentOS",
-        docs_url="/docs" if docs_enabled else None,
-        redoc_url="/redoc" if docs_enabled else None,
-        openapi_url="/openapi.json" if docs_enabled else None,
+        docs_url="/docs" if api_settings.docs_enabled else None,
+        redoc_url="/redoc" if api_settings.docs_enabled else None,
+        openapi_url="/openapi.json" if api_settings.docs_enabled else None,
     )
     agent = Agent(id="probe-agent", name="Probe", db=InMemoryDb())
-    return AgentOS(
+    agent_os = AgentOS(
         name="AgentOS",
         base_app=base_app,
         db=InMemoryDb(),
         agents=[agent],
-        interfaces=[Whatsapp(agent=agent)],
-        settings=AgnoAPISettings(os_security_key=security_key, docs_enabled=docs_enabled),
+        interfaces=[AnswerDmWhatsapp()],
+        settings=api_settings,
+        on_route_conflict="preserve_base_app",
     )
+    install_authenticated_metadata_routes(base_app, agent_os, api_settings)
+    return agent_os
 
 
 def _auth_dependency_present(route) -> bool:
@@ -128,6 +143,23 @@ def no_railway(monkeypatch):
 @pytest.fixture
 def on_railway(monkeypatch):
     monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+
+
+@pytest.fixture
+def prod_env(monkeypatch):
+    """Ambiente de producao como a Railway entrega: runtime marcado + chave."""
+
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    monkeypatch.setenv("OS_SECURITY_KEY", VALID_KEY)
+
+
+@pytest.fixture
+def dev_env(monkeypatch):
+    """Dev local: sem marcador de Railway e sem chave."""
+
+    for marker in RAILWAY_MARKERS:
+        monkeypatch.delenv(marker, raising=False)
+    monkeypatch.delenv("OS_SECURITY_KEY", raising=False)
 
 
 def _validate(monkeypatch, **env):
@@ -210,16 +242,31 @@ def test_chave_com_espacos_e_normalizada(monkeypatch, no_railway) -> None:
 # --- 3. Superficie publica --------------------------------------------------
 
 
-def test_superficie_publica_e_exatamente_o_allowlist() -> None:
-    agent_os = _build_os(VALID_KEY, with_whatsapp=True, production=True)
-    anonimas = _anonymous_paths(agent_os.get_app())
+def test_superficie_anonima_e_exatamente_o_allowlist(prod_env) -> None:
+    """Igualdade, nao subconjunto: nada sobra e nada some do contrato."""
+
+    anonimas = _anonymous_paths(_build_os_like_main().get_app())
 
     # /workflows/ws valida o token dentro do handler (agno/os/router.py:280),
     # nao como dependencia — por isso nao aparece na arvore.
     anonimas.discard("/workflows/ws")
-    fora = sorted(anonimas - set(PUBLIC_PATH_ALLOWLIST))
 
-    assert not fora, f"rotas anonimas fora do allowlist: {fora}"
+    assert anonimas == set(PUBLIC_PATH_ALLOWLIST), (
+        f"sobrando: {sorted(anonimas - set(PUBLIC_PATH_ALLOWLIST))} / "
+        f"faltando: {sorted(set(PUBLIC_PATH_ALLOWLIST) - anonimas)}"
+    )
+
+
+def test_agentos_cru_deixa_home_e_info_abertos() -> None:
+    """Documenta o default do Agno que a F0.5 corrige.
+
+    Sem as rotas do `base_app`, `/` e `/info` ficam anonimas mesmo com a chave
+    configurada — nao existe flag no `AgnoAPISettings` para desligar as duas.
+    """
+
+    anonimas = _anonymous_paths(_build_os(VALID_KEY, with_whatsapp=True, production=True).get_app())
+
+    assert {"/", "/info"} <= anonimas
 
 
 def test_whatsapp_continua_anonimo() -> None:
@@ -351,7 +398,7 @@ def test_docs_seguem_disponiveis_em_dev() -> None:
 # --- 7. Montagem real: AgentOS sobre base_app (como em app/main.py) ----------
 
 
-def test_com_base_app_docs_somem_em_producao() -> None:
+def test_com_base_app_docs_somem_em_producao(prod_env) -> None:
     """Regressao: a primeira versao passava `docs_enabled` so ao AgentOS.
 
     Com `base_app`, o Agno ignora esse flag e /docs, /redoc e /openapi.json
@@ -359,27 +406,107 @@ def test_com_base_app_docs_somem_em_producao() -> None:
     este teste existe para que nao volte a passar despercebido.
     """
 
-    client = TestClient(_build_os_with_base_app(VALID_KEY, production=True).get_app())
+    client = TestClient(_build_os_like_main().get_app())
 
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 404, f"{path} continua exposto com base_app"
 
 
-def test_com_base_app_docs_ficam_em_dev() -> None:
-    client = TestClient(_build_os_with_base_app(None, production=False).get_app())
+def test_com_base_app_docs_ficam_em_dev(dev_env) -> None:
+    client = TestClient(_build_os_like_main().get_app())
 
     assert client.get("/openapi.json").status_code == 200
 
 
-def test_com_base_app_admin_continua_protegido() -> None:
-    client = TestClient(_build_os_with_base_app(VALID_KEY, production=True).get_app())
+def test_com_base_app_admin_continua_protegido(prod_env) -> None:
+    client = TestClient(_build_os_like_main().get_app())
 
     assert client.get("/agents").status_code == 401
     assert client.get("/agents", headers={"Authorization": f"Bearer {VALID_KEY}"}).status_code == 200
 
 
-def test_com_base_app_health_e_whatsapp_seguem_publicos() -> None:
-    client = TestClient(_build_os_with_base_app(VALID_KEY, production=True).get_app())
+# --- 8. F0.5: superficie anonima = /health + /whatsapp/webhook ---------------
 
-    assert client.get("/health").status_code == 200
-    assert client.get("/whatsapp/status").status_code == 200
+
+@pytest.fixture
+def client_producao(prod_env):
+    return TestClient(_build_os_like_main().get_app())
+
+
+@pytest.mark.parametrize("path", ["/", "/info", "/whatsapp/status"])
+def test_metadados_nao_sao_mais_publicos(client_producao, path) -> None:
+    """O aperto da F0.5. Antes as tres respondiam 200 a qualquer um."""
+
+    assert client_producao.get(path).status_code == 401, f"{path} ainda e anonimo"
+
+
+@pytest.mark.parametrize("path", ["/", "/info", "/whatsapp/status"])
+def test_metadados_seguem_funcionando_com_token(client_producao, path) -> None:
+    """Fechar nao pode virar quebrar: o cliente autenticado nao perdeu nada."""
+
+    resposta = client_producao.get(path, headers={"Authorization": f"Bearer {VALID_KEY}"})
+
+    assert resposta.status_code == 200, f"{path} quebrou para o cliente autenticado"
+
+
+def test_payload_de_home_e_info_e_o_mesmo_do_agno(client_producao) -> None:
+    auth = {"Authorization": f"Bearer {VALID_KEY}"}
+
+    home = client_producao.get("/", headers=auth).json()
+    assert home["name"] == "AgentOS API"
+    assert home["version"] == "1.0.0"
+    assert home["id"]
+
+    info = client_producao.get("/info", headers=auth).json()
+    assert set(info) == {"agno_version", "agent_count", "team_count", "workflow_count"}
+    assert info["agent_count"] == 1
+
+
+def test_status_do_whatsapp_preserva_o_workflow(client_producao) -> None:
+    """`/status` fechou, mas continua dizendo por qual workflow o canal entra."""
+
+    corpo = client_producao.get("/whatsapp/status", headers={"Authorization": f"Bearer {VALID_KEY}"}).json()
+
+    assert corpo == {"status": "available", "workflow": "ANSWER_DM"}
+
+
+def test_health_continua_publico_em_producao(client_producao) -> None:
+    assert client_producao.get("/health").status_code == 200
+
+
+def test_webhook_da_meta_continua_publico(client_producao) -> None:
+    """GET com verify token errado: 403 do handler, nunca 401 da auth."""
+
+    resposta = client_producao.get(
+        "/whatsapp/webhook",
+        params={"hub.mode": "subscribe", "hub.verify_token": "errado", "hub.challenge": "1"},
+    )
+
+    assert resposta.status_code == 403
+
+
+def test_webhook_da_meta_aceita_verify_token_correto(client_producao) -> None:
+    resposta = client_producao.get(
+        "/whatsapp/webhook",
+        params={"hub.mode": "subscribe", "hub.verify_token": "verify-de-teste", "hub.challenge": "42"},
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.text == "42"
+
+
+def test_post_do_webhook_sem_hmac_continua_403(client_producao) -> None:
+    """O HMAC segue sendo o guarda do POST — a auth Bearer nao entrou na frente."""
+
+    resposta = client_producao.post("/whatsapp/webhook", json={"object": "whatsapp_business_account"})
+
+    assert resposta.status_code == 403
+
+
+@pytest.mark.parametrize("path", ["/", "/info", "/whatsapp/status"])
+def test_dev_local_mantem_metadados_abertos(dev_env, path) -> None:
+    """Preferencia D: sem chave, o desenvolvimento local nao perde nada."""
+
+    client = TestClient(_build_os_like_main().get_app())
+
+    assert client.get(path).status_code == 200

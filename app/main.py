@@ -44,7 +44,7 @@ from agents.judith_team import (
 )
 from agents.my_agent import my_agent  # noqa: E402
 from app.interfaces import build_interfaces  # noqa: E402
-from app.security import build_api_settings
+from app.security import build_api_settings, install_authenticated_metadata_routes
 from db import get_postgres_db, repair_agentos_db_schema  # noqa: E402
 
 
@@ -115,7 +115,15 @@ agent_os = AgentOS(
     # Autenticacao Bearer nativa do Agno nos routers administrativos. Ver
     # app/security.py para o recorte do que continua publico e por que.
     settings=api_settings,
+    # F0.5: quando uma rota nossa colide com uma do AgentOS, a nossa vence
+    # (agno/os/app.py:951). E assim que fechamos `/` e `/info`, que o Agno
+    # publica sem autenticacao por construcao.
+    on_route_conflict="preserve_base_app",
 )
+
+# F0.5: `/` e `/info` sairam da superficie anonima. Precisa ser antes do
+# `get_app()`; ver a docstring da funcao para o porque.
+install_authenticated_metadata_routes(base_app, agent_os, api_settings)
 
 app = agent_os.get_app()
 
