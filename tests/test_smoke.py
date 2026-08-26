@@ -21,6 +21,9 @@ def test_validate_envs_accepts_railway_database_url(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("DATABASE_URL", "postgres://user:pass@postgres.railway.internal:5432/railway")
     monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    # Obrigatoria em runtime Railway desde o hardening da API (F0.1) —
+    # ver tests/test_api_hardening.py para o contrato completo.
+    monkeypatch.setenv("OS_SECURITY_KEY", "s" * 32)
     monkeypatch.delenv("DB_HOST", raising=False)
 
     from utils.validate_envs import validate_envs

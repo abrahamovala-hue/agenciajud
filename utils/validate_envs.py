@@ -16,6 +16,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _PLACEHOLDER_PREFIXES = ("your-", "your ")
 _LOCAL_DB_HOSTS = ("", "localhost", "127.0.0.1", "db")
 
+# Chave curta e teatro de seguranca: 32 chars de entropia real tornam forca
+# bruta remota inviavel. Mantido aqui (e nao em app/security.py) porque quem
+# reprova o boot e este modulo.
+_MIN_OS_SECURITY_KEY_LENGTH = 32
+
+
+def is_railway_runtime() -> bool:
+    """True quando o processo roda dentro da Railway.
+
+    A Railway injeta estas variaveis em todo container; nenhuma delas existe
+    em dev local. Usado para decidir o que e obrigatorio em producao.
+    """
+
+    return bool(getenv("RAILWAY_ENVIRONMENT") or getenv("RAILWAY_SERVICE_NAME") or getenv("RAILWAY_PROJECT_ID"))
+
 
 class AppSettings(BaseSettings):
     """Runtime settings loaded from environment variables and `.env`."""
@@ -31,6 +46,8 @@ class AppSettings(BaseSettings):
     db_user: str = "ai"
     db_pass: str = "ai"
     db_database: str = "ai"
+
+    os_security_key: str = ""
 
     whatsapp_enabled: bool = False
     whatsapp_access_token: str = ""
@@ -53,7 +70,7 @@ class AppSettings(BaseSettings):
 
     @staticmethod
     def _is_railway_runtime() -> bool:
-        return bool(getenv("RAILWAY_ENVIRONMENT") or getenv("RAILWAY_SERVICE_NAME") or getenv("RAILWAY_PROJECT_ID"))
+        return is_railway_runtime()
 
     @model_validator(mode="after")
     def _validate_required_settings(self) -> "AppSettings":
@@ -76,6 +93,24 @@ class AppSettings(BaseSettings):
                 "Postgres is not configured for Railway. Set DATABASE_URL=${{Postgres.DATABASE_URL}} "
                 "or set DB_HOST, DB_PORT, DB_USER, DB_PASS, and DB_DATABASE from the Postgres service."
             )
+
+        # Fail-closed da API administrativa. Sem chave, o Agno libera ~100
+        # rotas anonimas (agno/os/auth.py:97 retorna True quando a chave e
+        # vazia) — inclusive rodar agente, escrever knowledge e migrar banco.
+        # Em dev local a API segue aberta de proposito.
+        if self._is_railway_runtime():
+            security_key = self.os_security_key.strip()
+            if self._is_placeholder(security_key):
+                raise ValueError(
+                    "OS_SECURITY_KEY is missing. Without it the AgentOS admin API "
+                    "(agent runs, knowledge writes, database migration) is anonymous. "
+                    "Set it on the Railway service variables before deploying."
+                )
+            if len(security_key) < _MIN_OS_SECURITY_KEY_LENGTH:
+                raise ValueError(
+                    f"OS_SECURITY_KEY is too short ({len(security_key)} chars). "
+                    f"Use at least {_MIN_OS_SECURITY_KEY_LENGTH} characters of real entropy."
+                )
 
         if not self.whatsapp_enabled:
             return self

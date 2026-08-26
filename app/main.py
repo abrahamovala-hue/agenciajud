@@ -44,6 +44,7 @@ from agents.judith_team import (
 )
 from agents.my_agent import my_agent  # noqa: E402
 from app.interfaces import build_interfaces  # noqa: E402
+from app.security import build_api_settings
 from db import get_postgres_db, repair_agentos_db_schema  # noqa: E402
 
 
@@ -101,6 +102,9 @@ agent_os = AgentOS(
     ],
     interfaces=build_interfaces(my_agent),
     config=str(Path(__file__).parent / "config.yaml"),
+    # Autenticacao Bearer nativa do Agno nos routers administrativos. Ver
+    # app/security.py para o recorte do que continua publico e por que.
+    settings=build_api_settings(),
 )
 
 app = agent_os.get_app()
