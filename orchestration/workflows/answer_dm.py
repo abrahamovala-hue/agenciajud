@@ -76,6 +76,30 @@ QC_SPEC = WorkflowSpec(
 )
 
 
+def _apply_disclosure_gate(mensagem: str, *, agent_id: str) -> dict[str, str] | None:
+    """Impede que conteudo pago saia na resposta final.
+
+    Devolve `None` quando nao ha nada a fazer — assim o caminho normal nao
+    muda em nada. NUNCA levanta: uma checagem de seguranca que derruba a
+    resposta de uma cliente troca um vazamento por uma queda, e a queda
+    acontece em toda mensagem, nao so nas perigosas.
+    """
+
+    try:
+        from brain.access_policy import CUSTOMER_FACING_AGENTS
+        from brain.disclosure_gate import guard
+
+        if agent_id not in CUSTOMER_FACING_AGENTS:
+            return None
+
+        saida, veredito = guard(mensagem, is_customer_facing=True)
+        if veredito.decision == "ALLOW":
+            return None
+        return {"mensagem": saida, "decisao": veredito.decision, "motivo": veredito.reason}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _finalize(
     log: ExecutionLog,
     *,
@@ -103,6 +127,18 @@ def _finalize(
     # A cliente nunca ve nome de documento interno. A evidencia continua
     # inteira em `references`/`sources_opened` — o corte e so na prosa.
     outbound = customer_facing_message(gate) or strip_internal_references(decision.output)
+
+    # Paid Content Disclosure Gate (F2.7). Roda DEPOIS do Evidence Gate e por
+    # ultimo, sobre o texto que realmente vai sair: os dois respondem
+    # perguntas diferentes. O Evidence Gate pergunta "isso tem fonte?"; este
+    # pergunta "isso entrega o produto pago?". Uma receita inteira copiada do
+    # ebook passa no primeiro com folga — a fonte existe e foi aberta.
+    disclosure = _apply_disclosure_gate(outbound, agent_id=agent_id)
+    if disclosure is not None:
+        outbound = disclosure["mensagem"]
+        log.outputs["disclosure_status"] = disclosure["decisao"]
+        log.outputs["disclosure_reason"] = disclosure["motivo"]
+        log.outputs["disclosure_blocked"] = disclosure["decisao"] == "BLOCK"
 
     log.outputs.update(
         {

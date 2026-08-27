@@ -48,6 +48,21 @@ from brain.security import as_data_envelope
 
 DEFAULT_LIMIT = 4
 
+#: Quantos candidatos pontuar antes de diversificar. Precisa ser maior que o
+#: top-k final, senao nao ha o que diversificar.
+CANDIDATE_POOL_FACTOR = 5
+
+#: Teto de chunks do MESMO documento no resultado final.
+#:
+#: A F2.5 media isso: um documento longo ocupava o top-k inteiro e expulsava a
+#: outra fonte relevante. Com os ebooks o risco piora — um ebook tem 25-31
+#: chunks e uma busca por "temperagem" casa com quase todos, empurrando
+#: PRODUCTS e OFFERS para fora.
+#:
+#: 2 e o menor numero que ainda deixa um documento contribuir com contexto
+#: (secao + secao vizinha) sem monopolizar.
+MAX_PER_DOCUMENT = 2
+
 
 @dataclass(frozen=True)
 class Provenance:
@@ -76,10 +91,25 @@ class Provenance:
     deprecated_by: str | None
     heading: str | None
     ordinal: int
+    # --- F2.7 -----------------------------------------------------------
+    source_authority: str | None = None
+    provided_by: str | None = None
+    content_kind: str | None = None
+    page: int | None = None
+    recipe_id: str | None = None
+    heading_path: str | None = None
+    entitlement_scope: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "fonte": self.external_key or self.document_id,
+            "autoridade": self.source_authority,
+            "fornecido_por": self.provided_by,
+            "tipo_de_conteudo": self.content_kind,
+            "pagina": self.page,
+            "receita": self.recipe_id,
+            "caminho": self.heading_path,
+            "escopo_de_compra": self.entitlement_scope,
             "documento": self.title,
             "camada": self.layer,
             "status": self.status,
@@ -161,6 +191,54 @@ def _iso(valor: Any) -> str | None:
     return valor.isoformat() if hasattr(valor, "isoformat") else (str(valor) if valor else None)
 
 
+def _diversify(pontuados: list[tuple[int, dict[str, Any]]], *, limit: int) -> list[tuple[int, dict[str, Any]]]:
+    """Escolhe o top-k espalhando por documento e por receita.
+
+    Duas passadas, e a segunda importa tanto quanto a primeira:
+
+    1. respeitando `MAX_PER_DOCUMENT` e no maximo um chunk por `recipe_id`;
+    2. se sobraram vagas, preenche ignorando os tetos.
+
+    A segunda passada existe para que a diversificacao NUNCA devolva menos
+    resultados do que a ordenacao por score devolveria. O teto redistribui
+    posicoes; nao descarta recall. Sem ela, uma busca cuja unica fonte
+    relevante e um documento so voltaria com 2 resultados em vez de 4 —
+    trocando um problema real por outro.
+
+    O score original e preservado e continua ordenando: isto reordena
+    posicoes, nao inventa relevancia.
+    """
+
+    escolhidos: list[tuple[int, dict[str, Any]]] = []
+    por_documento: dict[str, int] = {}
+    receitas_vistas: set[str] = set()
+    usados: set[int] = set()
+
+    for indice, (score, linha) in enumerate(pontuados):
+        if len(escolhidos) >= limit:
+            break
+        documento = str(linha.get("document_id"))
+        receita = linha.get("recipe_id")
+        if por_documento.get(documento, 0) >= MAX_PER_DOCUMENT:
+            continue
+        if receita and receita in receitas_vistas:
+            continue
+        escolhidos.append((score, linha))
+        usados.add(indice)
+        por_documento[documento] = por_documento.get(documento, 0) + 1
+        if receita:
+            receitas_vistas.add(str(receita))
+
+    if len(escolhidos) < limit:
+        for indice, (score, linha) in enumerate(pontuados):
+            if len(escolhidos) >= limit:
+                break
+            if indice not in usados:
+                escolhidos.append((score, linha))
+
+    return escolhidos
+
+
 def search(
     *,
     agent_id: str,
@@ -200,9 +278,10 @@ def search(
             pontuados.append((score, linha))
 
     pontuados.sort(key=lambda item: item[0], reverse=True)
+    selecionados = _diversify(pontuados[: limit * CANDIDATE_POOL_FACTOR], limit=limit)
 
     hits: list[SearchHit] = []
-    for score, linha in pontuados[:limit]:
+    for score, linha in selecionados:
         disclosure = decide_disclosure(
             content_access=linha["content_access"],
             agent_is_customer_facing=politica.is_customer_facing,
@@ -248,6 +327,13 @@ def search(
                     deprecated_by=linha.get("deprecated_by"),
                     heading=linha.get("heading"),
                     ordinal=int(linha["ordinal"]),
+                    source_authority=linha.get("source_authority"),
+                    provided_by=linha.get("provided_by"),
+                    content_kind=linha.get("content_kind"),
+                    page=linha.get("page"),
+                    recipe_id=linha.get("recipe_id"),
+                    heading_path=linha.get("heading_path"),
+                    entitlement_scope=linha.get("entitlement_scope"),
                 ),
                 disclosure=disclosure,
                 body=corpo,

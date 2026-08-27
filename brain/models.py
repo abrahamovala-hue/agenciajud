@@ -111,6 +111,71 @@ ALLOWED_TRANSITIONS: dict[DocStatus, frozenset[DocStatus]] = {
 
 Confidence = Literal["alto", "medio", "baixo"]
 
+# --- Autoridade da fonte (F2.7) ---------------------------------------------
+
+SourceAuthority = Literal[
+    "USER_AUTHORIZED_PRIMARY_SOURCE",
+    "USER_PROVIDED_OFFICIAL_SITE_SNAPSHOT",
+    "OFFICIAL_WEBSITE_LIVE",
+    "DERIVED_DOCUMENT",
+]
+SOURCE_AUTHORITIES: tuple[SourceAuthority, ...] = get_args(SourceAuthority)
+
+#: O QUE AUTORIDADE SIGNIFICA — e o que ela nao significa.
+#:
+#: A Judith entregar um PDF confirma que ela PUBLICA e ENSINA aquilo. Nao
+#: confirma que toda afirmacao externa escrita la dentro e verdadeira. "O
+#: mercado de chocolate premium cresce" continua sendo AUTHORIAL_CLAIM mesmo
+#: vindo de uma fonte primaria autorizada.
+#:
+#: Confundir os dois transformaria a autorizacao da Judith em verificacao
+#: factual do mundo, que ela nunca deu.
+AUTHORITY_MEANING: dict[SourceAuthority, str] = {
+    "USER_AUTHORIZED_PRIMARY_SOURCE": (
+        "Arquivo do proprio produto, entregue pela Judith como fonte atual. Prova o que ela "
+        "publica e ensina; nao prova afirmacao externa contida nele."
+    ),
+    "USER_PROVIDED_OFFICIAL_SITE_SNAPSHOT": (
+        "Captura do site oficial feita pela Judith. Prova o estado do site no momento da captura; "
+        "nao prova o estado de hoje."
+    ),
+    "OFFICIAL_WEBSITE_LIVE": "Site oficial lido ao vivo, com status HTTP e checksum registrados.",
+    "DERIVED_DOCUMENT": "Documento construido a partir de outras fontes. Nunca vence uma fonte primaria.",
+}
+
+# --- Classificacao funcional do trecho (F2.7) -------------------------------
+
+#: Para que serve o trecho. Governa retrieval (diversidade, precedencia) e
+#: disclosure (o que pode sair). Deliberadamente pequeno: e classificacao
+#: operacional, nao ontologia.
+ContentKind = Literal[
+    "PRODUCT_METADATA",
+    "AUTHORIAL_TEACHING",
+    "TECHNIQUE",
+    "RECIPE",
+    "TROUBLESHOOTING",
+    "STORAGE_VALIDITY",
+    "TOOLS_EQUIPMENT",
+    "SALES_GUIDANCE",
+    "MARKETING_CLAIM",
+    "AUTHORIAL_CLAIM",
+    "CROSS_PROMOTION",
+    "AUTHORIAL_MESSAGE",
+    "COMMERCIAL_TERMS",
+    "POLICY",
+    "FAQ",
+]
+CONTENT_KINDS: tuple[ContentKind, ...] = get_args(ContentKind)
+
+#: Os tipos cujo corpo integral reconstroi o produto pago. O gate de
+#: disclosure trata estes com o rigor maximo — ver brain/disclosure_gate.py.
+PROTECTED_KINDS: frozenset[str] = frozenset({"RECIPE", "TECHNIQUE", "AUTHORIAL_TEACHING"})
+
+#: Os tipos que NAO sao fato verificado sobre o mundo, mesmo vindos de fonte
+#: primaria. Um agente pode citar que a Judith diz isso; nao pode afirmar como
+#: fato proprio, e nunca como promessa de resultado.
+UNVERIFIED_KINDS: frozenset[str] = frozenset({"MARKETING_CLAIM", "AUTHORIAL_CLAIM", "SALES_GUIDANCE"})
+
 # --- Disclosure -------------------------------------------------------------
 
 ContentAccess = Literal["INTERNAL_ONLY", "SUPPORT_USE", "PUBLIC", "ENTITLEMENT_REQUIRED"]

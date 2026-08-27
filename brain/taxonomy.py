@@ -112,6 +112,7 @@ _TOPIC_RULES: tuple[tuple[str, str], ...] = (
 _EXTRA_TOPICS: dict[str, tuple[str, ...]] = {
     "OFFERS": ("comercial", "preco", "oferta"),
     "PRODUCTS": ("comercial", "produto"),
+    "OFFER_STRATEGY_INTERNAL": ("interno", "estrategia"),
     "BUSINESS_RULES": ("regra", "politica", "comercial"),
     "PRODUCT_PAGES_AUDIT": ("comercial", "produto"),
     "VOICE": ("tom",),
@@ -155,6 +156,10 @@ _CONTENT_ACCESS_BY_KEY: dict[str, ContentAccess] = {
     "OFFERS": "SUPPORT_USE",
     "PRODUCTS": "SUPPORT_USE",
     "COMMENTS_FAQ": "SUPPORT_USE",
+    # F2.7: recebeu as ideias de marketing que estavam dentro de OFFERS.
+    # INTERNAL_ONLY nao e zelo excessivo: um countdown proposto e um preco
+    # hipotetico, se resumidos para a cliente, viram campanha inexistente.
+    "OFFER_STRATEGY_INTERNAL": "INTERNAL_ONLY",
 }
 
 _DEFAULT_CONTENT_ACCESS: ContentAccess = "INTERNAL_ONLY"

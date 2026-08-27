@@ -167,12 +167,25 @@ def test_template_e_identificado(key: str) -> None:
     assert "TEMPLATE" in source.path.read_text(encoding="utf-8").upper()
 
 
-def test_a_verificar_e_identificado() -> None:
-    """OFFERS e vigente, mas tem uma oferta marcada 'A VERIFICAR' dentro dele."""
+def test_ressalva_de_offers_acompanha_o_conflito_real() -> None:
+    """A ressalva de OFFERS aponta o que de fato esta em aberto.
+
+    Ate a F2.7 era a colecao completa, marcada 'A VERIFICAR'. Isso foi
+    RESOLVIDO documentalmente: o site nao tem preco nem checkout de colecao,
+    entao ela nao e oferta. O que ficou aberto e outra coisa — o site publica
+    R$ 47 no texto e 25.00 no schema.org para o mesmo produto.
+
+    Este teste existe para garantir que a ressalva descreve a pendencia
+    VIGENTE, e nao uma que ja foi respondida.
+    """
 
     source = DOCUMENTS["OFFERS"]
-    assert "A VERIFICAR" in source.path.read_text(encoding="utf-8").upper()
-    assert "A VERIFICAR" in source.caveat.upper()
+    texto = source.path.read_text(encoding="utf-8")
+
+    assert "A VERIFICAR" not in texto.upper(), "a pendencia da colecao foi resolvida"
+    assert "UNAVAILABLE" in texto, "a colecao precisa estar declarada como indisponivel"
+    assert source.caveat, "OFFERS precisa dizer o que ainda esta em aberto"
+    assert "25.00" in source.caveat, "a ressalva precisa apontar o conflito de preco vigente"
 
 
 def test_ressalva_viaja_junto_do_trecho_buscado() -> None:

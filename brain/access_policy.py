@@ -59,13 +59,100 @@ CUSTOMER_FACING_AGENTS: frozenset[str] = frozenset(
 
 #: Quem pode CONSULTAR material pago (ENTITLEMENT_REQUIRED) para responder
 #: corretamente. Consultar nao e entregar — ver brain/models.py.
+#:
+#: F2.7: `sales-conversion-agent` SAIU desta lista. Vender nao exige conhecer
+#: a formula: o outline seguro (PRODUCT_OUTLINE_*, L3 PUBLIC) responde tudo
+#: que uma conversa de venda precisa — o que o ebook cobre, quantas receitas,
+#: quais categorias, quais bonus. Manter o acesso ao corpo integral so
+#: aumentaria a superficie por onde conteudo pago pode sair, sem responder
+#: nenhuma pergunta a mais. Least privilege de verdade custa uma linha.
 CAN_KNOW_PAID_AGENTS: frozenset[str] = frozenset(
     {
         "customer-support-agent",
-        "sales-conversion-agent",
         "knowledge-manager",
     }
 )
+
+#: Documentos nativos do Brain — nao existem em `docs/`, entao a whitelist
+#: herdada de `agents/knowledge_policies.py` nao fala deles.
+#:
+#: Esta e uma concessao EXPLICITA e por agente. Nao ha default: agente que nao
+#: aparece aqui nao ve nenhum documento novo da F2.7, exatamente como antes.
+#: Fail-closed continua valendo — a tabela concede, nunca abre.
+BRAIN_NATIVE_GRANTS: dict[str, frozenset[str]] = {
+    # Revisao humana e curadoria: ve tudo, inclusive o corpo integral.
+    "knowledge-manager": frozenset(
+        {
+            "EBOOK_RECHEIOS",
+            "EBOOK_CASQUINHAS",
+            "EBOOK_LASCAS",
+            "PRODUCT_OUTLINE_RECHEIOS",
+            "PRODUCT_OUTLINE_CASQUINHAS",
+            "PRODUCT_OUTLINE_LASCAS",
+            "SITE_SNAPSHOT",
+        }
+    ),
+    # Suporte: precisa do conteudo tecnico para diagnosticar de verdade
+    # ("sua ganache separou por falha de emulsificacao"). O que ele pode
+    # ENTREGAR e outra decisao, e mora no Disclosure Gate.
+    "customer-support-agent": frozenset(
+        {
+            "EBOOK_RECHEIOS",
+            "EBOOK_CASQUINHAS",
+            "EBOOK_LASCAS",
+            "PRODUCT_OUTLINE_RECHEIOS",
+            "PRODUCT_OUTLINE_CASQUINHAS",
+            "PRODUCT_OUTLINE_LASCAS",
+            "SITE_SNAPSHOT",
+        }
+    ),
+    # Venda, DM e funil: outline seguro e condicao comercial. Sem corpo pago.
+    "sales-conversion-agent": frozenset(
+        {"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS", "SITE_SNAPSHOT"}
+    ),
+    "community-dm-agent": frozenset(
+        {"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}
+    ),
+    "offer-funnel-strategist": frozenset(
+        {"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS", "SITE_SNAPSHOT"}
+    ),
+    "crm-lifecycle-agent": frozenset(
+        {"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}
+    ),
+    # Conteudo: temas e resumos seguros. Nunca o corpo — transformar conteudo
+    # pago em post publico e o vazamento mais facil de cometer sem perceber.
+    "caption-writer": frozenset({"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}),
+    "script-writer": frozenset({"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}),
+    "hook-finder": frozenset({"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}),
+    "social-media-manager": frozenset(
+        {"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}
+    ),
+    "brand-architect": frozenset(
+        {"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}
+    ),
+    "cmo": frozenset({"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}),
+    "marketing-director": frozenset(
+        {"PRODUCT_OUTLINE_RECHEIOS", "PRODUCT_OUTLINE_CASQUINHAS", "PRODUCT_OUTLINE_LASCAS"}
+    ),
+}
+
+#: Camadas que os documentos nativos ocupam. Concedidas junto com as chaves —
+#: sem isto o filtro de camada barraria o documento antes da whitelist.
+_NATIVE_LAYERS: dict[str, str] = {
+    "EBOOK_RECHEIOS": "L1",
+    "EBOOK_CASQUINHAS": "L1",
+    "EBOOK_LASCAS": "L1",
+    "PRODUCT_OUTLINE_RECHEIOS": "L3",
+    "PRODUCT_OUTLINE_CASQUINHAS": "L3",
+    "PRODUCT_OUTLINE_LASCAS": "L3",
+    "SITE_SNAPSHOT": "L3",
+}
+
+
+def native_grants(agent_id: str) -> frozenset[str]:
+    """Documentos nativos do Brain concedidos a este agente. Vazio por default."""
+
+    return BRAIN_NATIVE_GRANTS.get(agent_id, frozenset())
 
 #: Principals que revisam conteudo nao aprovado. Nao sao agentes de negocio:
 #: o console e uma interface humana.
@@ -139,8 +226,11 @@ def _derive(agent_id: str) -> KnowledgeAccess:
             f"Acesso negado (fail-closed). Agentes conhecidos: {', '.join(sorted(KNOWLEDGE_POLICIES))}."
         )
 
-    chaves = frozenset(doc.key for doc in politica.documents)
-    camadas = frozenset(layer_for(key=doc.key, relative_path=doc.relative_path) for doc in politica.documents)
+    concedidos = native_grants(agent_id)
+    chaves = frozenset(doc.key for doc in politica.documents) | concedidos
+    camadas = frozenset(
+        layer_for(key=doc.key, relative_path=doc.relative_path) for doc in politica.documents
+    ) | frozenset(_NATIVE_LAYERS[chave] for chave in concedidos if chave in _NATIVE_LAYERS)
 
     revisor = agent_id in REVIEW_PRINCIPALS
     return KnowledgeAccess(

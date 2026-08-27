@@ -69,4 +69,23 @@
 
 ---
 
-*Última atualização: 07/08/2026*
+## Fatos sustentados pelas fontes primárias (F2.7 — 2026-08-27)
+
+Respostas seguras, derivadas dos PDFs dos ebooks e do site oficial verificado.
+**Nenhuma delas contém receita, gramagem ou método** — para isso existe o ebook.
+
+| Pergunta | Resposta segura | Origem |
+|---|---|---|
+| O ebook de Recheios tem brigadeiro? | Sim. São 3 Brigadeiros Gourmet (Paçoca, Pão de Mel, e com Bolo de Cenoura) dentro das 20 receitas. | PDF de Recheios |
+| Quantas receitas tem o ebook de Recheios? | 20 receitas em 4 categorias: 7 ganaches, 3 brigadeiros gourmet, 8 gianduias, 2 caramelos. | PDF, sumário |
+| O que ensina Casquinhas Profissionais? | Temperagem (3 métodos: adição, tablagem e Mycryo), curvas de temperatura, tipos de forma, moldagem, espessura, cristalização, desenforme, fechamento, decoração, armazenamento, defeitos e soluções. | PDF de Casquinhas |
+| O ebook de Lascas tem aula bônus? Quantas? | Sim, 4 aulas bônus, com acesso vitalício à área de membros. | PDF de Lascas, p. 30 |
+| Recheios e Casquinhas têm bônus? | O site anuncia 4 vídeos bônus em cada ebook. O PDF desses dois não documenta — confirmar com a Judith antes de afirmar. | site |
+| Tem coleção/combo dos 3? | Não existe combo comprável. Os 3 ebooks são vendidos individualmente. | site ao vivo |
+| Qual o preço? | Consultar `brand/OFFERS.md`. **Este documento não é fonte de preço.** | regra |
+| Qual a garantia? | 7 dias, incondicional. | site + `schema.org` |
+| Me passa a receita completa? | Não. O conteúdo integral é do ebook. Dá para explicar o conceito e ajudar a resolver o problema. | política |
+
+---
+
+*Última atualização: 2026-08-27 (F2.7). Bloco original de 07/08/2026 preservado acima.*

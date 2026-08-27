@@ -21,6 +21,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "ruff"]
+# Extracao de PDF. NAO entra em producao: a ingestao das fontes primarias e
+# uma tarefa offline, e o runtime le o texto ja extraido do Postgres. Manter
+# fora das dependencias principais tambem mantem o parser de PDF fora da
+# imagem que atende webhook.
+ingest = ["pymupdf>=1.24"]
 
 [build-system]
 requires = ["setuptools"]

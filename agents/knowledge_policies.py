@@ -94,17 +94,28 @@ _CATALOG: tuple[DocumentSource, ...] = (
     ),
     DocumentSource(
         key="PRODUCTS",
-        title="PRODUCTS — catalogo de produtos e politica de garantia",
+        title="PRODUCTS — identidade estavel dos produtos",
         relative_path="JUDITH-AI-TEAM/brand/PRODUCTS.md",
-        summary="Produtos digitais, o que cada um entrega, politica de garantia.",
-        caveat="A secao de produtos futuros esta marcada 'a ser preenchida com Judith' — nao trate como catalogo confirmado.",
+        summary="Nome, subtitulo, formato, escopo, paginas, receitas e bonus comprovado. NAO tem preco.",
+        caveat="Preco, desconto e checkout nao moram aqui — sao de OFFERS.md.",
     ),
     DocumentSource(
         key="OFFERS",
-        title="OFFERS — precos, ofertas e links oficiais",
+        title="OFFERS — condicao comercial atual",
         relative_path="JUDITH-AI-TEAM/brand/OFFERS.md",
-        summary="Unica fonte legitima de preco, desconto e link de compra.",
-        caveat="A oferta de colecao completa esta marcada 'A VERIFICAR' — nao a use como preco confirmado.",
+        summary="Unica fonte de preco, desconto, checkout, garantia e status de oferta.",
+        caveat=(
+            "O preco de O Segredo do Chocolate tem conflito aberto entre o texto do site (R$ 47) "
+            "e o schema.org (25.00). Usar R$ 47 e nao afirmar como definitivo."
+        ),
+    ),
+    DocumentSource(
+        key="OFFER_STRATEGY_INTERNAL",
+        title="OFFER_STRATEGY_INTERNAL — ideias e roadmap de oferta",
+        relative_path="JUDITH-AI-TEAM/brand/OFFER_STRATEGY_INTERNAL.md",
+        summary="Propostas de marketing NAO implementadas. Nada aqui e oferta ativa.",
+        caveat="Documento interno: nenhuma linha dele pode chegar a cliente, nem resumida.",
+        reliability="template",
     ),
     # --- Negocio e governanca ---
     DocumentSource(

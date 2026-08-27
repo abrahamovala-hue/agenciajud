@@ -137,6 +137,14 @@ _OUTCOME_ALLOWLIST = (
     "evidence_required",
     "sources_opened",
     "references",
+    # F2.7 — telemetria do Disclosure Gate. `disclosure_status` e uma decisao
+    # (ALLOW/SAFE_REFORMULATION/BLOCK) e `disclosure_reason` carrega apenas
+    # contagens ("5 medidas com gramagem"). Nenhum dos dois carrega o texto
+    # inspecionado — e por isso que eles podem entrar aqui e `final_response`
+    # nao pode.
+    "disclosure_status",
+    "disclosure_reason",
+    "disclosure_blocked",
 )
 
 

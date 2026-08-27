@@ -34,6 +34,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -47,6 +48,7 @@ DOCUMENTS_TABLE = "judith_knowledge_documents"
 VERSIONS_TABLE = "judith_knowledge_versions"
 CHUNKS_TABLE = "judith_knowledge_chunks"
 CONFLICTS_TABLE = "judith_knowledge_conflicts"
+ARTIFACTS_TABLE = "judith_knowledge_artifacts"
 
 # Mesmo padrao da F1: JSONB indexavel no Postgres, JSON generico no SQLite
 # dos testes. Um caminho de codigo so.
@@ -106,6 +108,17 @@ def build_documents_table(metadata: MetaData) -> Table:
         Column("topics", _JSON, nullable=True),
         # alto | medio | baixo — confianca na FONTE, nao validacao.
         Column("confidence", String, nullable=True),
+        # --- F2.7: fonte primaria e conteudo pago ---------------------------
+        # De onde vem a AUTORIDADE deste documento. USER_AUTHORIZED_PRIMARY_SOURCE
+        # significa "a Judith entregou este arquivo como fonte atual", e NAO
+        # "todas as afirmacoes dentro dele foram verificadas externamente".
+        Column("source_authority", String, nullable=True),
+        Column("provided_by", String, nullable=True),
+        # Escopo de compra que libera o conteudo integral. NULL = nao e
+        # material pago. Preenchido junto com content_access=ENTITLEMENT_REQUIRED.
+        Column("entitlement_scope", String, nullable=True),
+        # Artifact original (PDF) do qual este documento foi derivado.
+        Column("artifact_id", String, nullable=True),
         Column("valid_from", DateTime(timezone=True), nullable=True),
         Column("valid_to", DateTime(timezone=True), nullable=True),
         # Qual versao esta vigente. Sem isto seria preciso um MAX() por
@@ -169,9 +182,73 @@ def build_chunks_table(metadata: MetaData) -> Table:
         # Marcas do scanner de injecao. Conteudo suspeito e SINALIZADO, nunca
         # reescrito — ver brain/security.py.
         Column("flags", _JSON, nullable=True),
+        # --- F2.7: classificacao funcional e origem em pagina ---------------
+        # RECIPE | TECHNIQUE | TROUBLESHOOTING | MARKETING_CLAIM | ... —
+        # ver brain/models.py:ContentKind. Governa retrieval e disclosure.
+        Column("content_kind", String, nullable=True),
+        # Pagina do PDF de origem. NULL para chunk vindo de markdown.
+        Column("page", Integer, nullable=True),
+        # Todos os chunks da MESMA receita compartilham este id. E o que
+        # impede um chunk com o fim da receita A e o inicio da B de existir
+        # sem identificacao, e o que permite agrupar no retrieval.
+        Column("recipe_id", String, nullable=True),
+        Column("heading_path", String, nullable=True),
+        # Herdado do documento. Redundante de proposito, como `status`: o
+        # gate de disclosure decide por chunk, sem join.
+        Column("entitlement_scope", String, nullable=True),
         Index(f"ix_{CHUNKS_TABLE}_version_id", "version_id"),
         Index(f"ix_{CHUNKS_TABLE}_status", "status"),
+        Index(f"ix_{CHUNKS_TABLE}_recipe_id", "recipe_id"),
+        Index(f"ix_{CHUNKS_TABLE}_content_kind", "content_kind"),
         UniqueConstraint("version_id", "ordinal", name=f"uq_{CHUNKS_TABLE}_version_ordinal"),
+    )
+
+
+def build_artifacts_table(metadata: MetaData) -> Table:
+    """O arquivo ORIGINAL, byte a byte. Auditoria, nao retrieval.
+
+    Por que os bytes moram no Postgres e nao num bucket: sao ~33 MB de PDF,
+    uma vez. Introduzir S3/R2/MinIO para isso adicionaria credencial nova,
+    ciclo de vida novo e um segundo lugar de onde conteudo pago pode vazar —
+    custo real, em troca de nada que o banco ja nao resolva.
+
+    REGRAS:
+
+    - Imutavel. Nao ha UPDATE de `content` em lugar nenhum do codigo.
+    - Nao entra em retrieval. Nenhum chunk aponta para ca; `chunks_for_search`
+      nao conhece esta tabela.
+    - Nunca vai para agente customer-facing, nem em resumo.
+    - Existe para provar que o texto derivado corresponde ao original, e para
+      permitir reprocessar sem depender do arquivo continuar no disco de
+      alguem.
+    """
+
+    return Table(
+        ARTIFACTS_TABLE,
+        metadata,
+        Column("artifact_id", String, primary_key=True, nullable=False),
+        Column("source_id", String, nullable=False),
+        Column("filename", String, nullable=False),
+        Column("mime_type", String, nullable=False),
+        # Hash do ARQUIVO. E a identidade: reingerir o mesmo arquivo nao cria
+        # linha nova (ver KnowledgeRepository.store_artifact).
+        Column("sha256", String, nullable=False),
+        # Hash do TEXTO extraido. Muda se o extrator mudar, mesmo com o
+        # arquivo igual — e o que torna um reprocessamento detectavel.
+        Column("normalized_sha256", String, nullable=True),
+        Column("size_bytes", BigInteger, nullable=False),
+        Column("page_count", Integer, nullable=True),
+        Column("content", LargeBinary, nullable=False),
+        # USER_AUTHORIZED_PRIMARY_SOURCE | USER_PROVIDED_OFFICIAL_SITE_SNAPSHOT
+        Column("source_authority", String, nullable=False),
+        Column("provided_by", String, nullable=True),
+        # Somente quando comprovavel por metadado/nome/conteudo. Caso
+        # contrario fica NULL e o relatorio diz UNKNOWN — nao se inventa data.
+        Column("capture_date", DateTime(timezone=True), nullable=True),
+        Column("extraction_warnings", _JSON, nullable=True),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        UniqueConstraint("sha256", name=f"uq_{ARTIFACTS_TABLE}_sha256"),
+        Index(f"ix_{ARTIFACTS_TABLE}_source_id", "source_id"),
     )
 
 
@@ -215,4 +292,5 @@ def build_all(metadata: MetaData) -> list[Table]:
         build_versions_table(metadata),
         build_chunks_table(metadata),
         build_conflicts_table(metadata),
+        build_artifacts_table(metadata),
     ]

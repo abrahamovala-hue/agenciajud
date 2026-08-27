@@ -1,73 +1,150 @@
 # Ofertas — Bem me Qué
 
-> Tabela de preços e ofertas ativas dos produtos digitais.
+> **Única fonte canônica de condição comercial atual.**
+>
+> Identidade do produto está em `PRODUCTS.md`. Ideias, roadmap e hipóteses de
+> marketing estão em `OFFER_STRATEGY_INTERNAL.md` — **nada aqui é proposta**.
+
+**Verificado ao vivo em 2026-08-27** em `https://aprenda.atelierbemmeque.com/`
+(HTTP 200 na home e nas 3 páginas de produto).
 
 ---
 
-## Ofertas Ativas
+## Preços vigentes
 
-### Ebooks Individuais
+| Produto | Preço de referência exibido | Preço atual | Desconto (calculado) | Checkout |
+|---|---|---|---|---|
+| O Segredo do Chocolate | R$ 59,00 | **R$ 47,00** | 20,3% | [8GRurLG](https://pay.kiwify.com.br/8GRurLG) |
+| Recheios Profissionais | R$ 67,00 | **R$ 37,00** | 44,8% | [Eu6Eb9p](https://pay.kiwify.com.br/Eu6Eb9p) |
+| Casquinhas Profissionais | R$ 37,00 | **R$ 29,00** | 21,6% | [GlA8RXr](https://pay.kiwify.com.br/GlA8RXr) |
 
-| Ebook | De | Por | Desconto | Link |
-|-------|----|-----|----------|------|
-| O Segredo do Chocolate | R$ 59 | **R$ 47** | ~20% off | [Comprar](https://pay.kiwify.com.br/8GRurLG) |
-| Recheios Profissionais | R$ 67 | **R$ 37** | ~45% off | [Comprar](https://pay.kiwify.com.br/od97l73) |
-| Casquinhas Profissionais | R$ 67 | **R$ 23** | ~66% off | [Comprar](https://pay.kiwify.com.br/r8LmYVZ) |
+- `currency`: BRL
+- `offer_status`: ACTIVE
+- `valid_until`: **desconhecido** — o site diz "por tempo limitado" mas não publica
+  data. O agente **nunca** deve inventar prazo ("até domingo", "só hoje").
+- `derived_calculation`: **true** para a coluna de desconto — `(referência − atual) / referência`.
+- `last_verified_at`: 2026-08-27
+- `source`: site oficial ao vivo + snapshot em PDF fornecido pela Judith
 
-**Total individual (preço promocional):** R$ 107,00
-**Total sem desconto:** R$ 193,00
-
----
-
-### Coleção Completa (se existir)
-
-> ⚠️ **A VERIFICAR:** Confirmar com Judith se existe oferta de coleção completa e qual é o preço.
-
----
-
-## Estrutura de Oferta
-
-### Elementos presentes na página de venda:
-- ✅ Preço "de/por" (âncora de preço)
-- ✅ Tag "Oferta" em cada card
-- ✅ Botão CTA verde "Comprar agora" com seta
-- ✅ Link secundário "Ver detalhes do ebook"
-- ✅ Badge "Inclui vídeos bônus"
-- ✅ Avaliação 5 estrelas
-- ✅ Texto "Muito bem avaliado pelos alunos"
-- ✅ Lista de benefícios com checkmarks
-- ✅ "Compra segura · Acesso imediato" no hero
-
-### Gatilhos utilizados:
-- **Prova social** — Avaliações 5 estrelas, "muito bem avaliado"
-- **Autoridade** — "Judith Kolker, Chocolatier, especialista em chocolate artesanal premium"
-- **Segurança** — "Compra segura", garantia de devolução
-- **Urgência leve** — Tag "Oferta" + preço riscado
-- **Facilidade** — "Acesso imediato", "sem equipamentos profissionais"
-- **Resultado** — "Aparência profissional", "prontos para venda artesanal"
+> **Preço de referência ≠ preço anteriormente cobrado.** "De R$ 59" é âncora de
+> marketing exibida na página. Não há evidência de que R$ 59 tenha sido praticado, e
+> o agente não deve afirmar que foi.
 
 ---
 
-## CTAs Utilizados
+## ⚠️ CONFLITO ABERTO — preço de O Segredo do Chocolate
 
-1. **Hero:** "Quero a coleção" (botão outline no header)
-2. **Cards de produto:** "Comprar agora →"
-3. **Cards de produto:** "Ver detalhes do ebook [Nome]"
+O site ao vivo se contradiz internamente:
 
----
+| Onde | Valor |
+|---|---|
+| Texto visível (home e `/lascas-premium`) | **R$ 47,00** |
+| `schema.org` → `Product.offers.price` | **25.00** |
 
-## Pontos de Melhoria (Sugestões)
+Os outros dois produtos batem entre texto e schema (37,00 e 29,00). Só este diverge,
+e diverge nas duas páginas — não é falha de renderização.
 
-> ⚠️ Sugestões para discussão com Judith:
+Isso tem efeito fora do agente: `schema.org` é o que o Google lê para rich snippets.
 
-- [ ] Criar oferta de **Combo/Coleção** com desconto adicional
-- [ ] Adicionar **countdown timer** para urgência
-- [ ] Incluir **depoimentos reais** de alunos
-- [ ] Criar **order bump** ou upsell no checkout
-- [ ] Testar **preço psicológico** (R$ 47 → R$ 44,90)
-- [ ] Adicionar **número de alunos** como prova social
+**Enquanto não resolvido:** usar **R$ 47,00** (texto visível é o que a cliente vê) e
+**não** afirmar o valor como definitivo se questionada. `NEEDS_JUDITH`.
 
 ---
 
-*Última atualização: 07/08/2026*
-*Fonte: aprenda.atelierbemmeque.com*
+## Checkouts aposentados — não usar
+
+Estes links constavam nas versões anteriores deste documento e de `PRODUCTS.md`.
+Ambos respondem **HTTP 200** mas exibem *"Produto não está mais disponível"*:
+
+| Link antigo | Produto | Estado |
+|---|---|---|
+| `pay.kiwify.com.br/od97l73` | Recheios Profissionais | **INDISPONÍVEL** |
+| `pay.kiwify.com.br/r8LmYVZ` | Casquinhas Profissionais | **INDISPONÍVEL** |
+
+Os checkouts vigentes se chamam "Recheios 2" e "Casquinhas Profissionais 2" na
+Kiwify — foram substituídos.
+
+---
+
+## Garantia
+
+**7 dias, incondicional.** Verificado em três fontes independentes em 2026-08-27:
+
+- site ao vivo, seção "Garantia incondicional";
+- `schema.org` → `hasMerchantReturnPolicy.merchantReturnDays: 7` nos 3 produtos;
+- Termos de Uso do site: "garantia incondicional de satisfação por 7 dias".
+
+---
+
+## Entrega e acesso
+
+- Acesso liberado após confirmação do pagamento, pela plataforma parceira (Kiwify).
+- "Acesso 100% online."
+- **Acesso vitalício à área de membros:** comprovado pelo PDF apenas de
+  *O Segredo do Chocolate*. O site afirma para os três — origem: site.
+
+---
+
+## Bônus anunciados
+
+O site anuncia **"4 vídeos bônus gravados pela Judith em cada ebook"** e exibe o
+badge "Inclui vídeos bônus" nos três produtos.
+
+| Produto | Comprovado pelo PDF | Anunciado pelo site |
+|---|---|---|
+| O Segredo do Chocolate | ✅ 4 aulas, página 30 | ✅ |
+| Recheios Profissionais | ❌ não consta | ✅ |
+| Casquinhas Profissionais | ❌ não consta | ✅ |
+
+Para os dois últimos a origem é **o site**, não o produto. `NEEDS_JUDITH`.
+
+---
+
+## Coleção / Combo
+
+**Não existe como oferta comprável.** Verificado no site ao vivo e no snapshot:
+
+- a seção "Coleção completa" existe e lista os 3 ebooks;
+- **não tem preço próprio**;
+- **não tem checkout próprio** — só os 3 links individuais;
+- o botão "Quero a coleção" é âncora para a seção `#colecao`.
+
+`bundle`: `UNAVAILABLE`.
+
+> R$ 107 é a **soma** dos três preços individuais, não um combo. O agente não deve
+> oferecer coleção, preço de coleção, nem desconto de coleção.
+
+---
+
+## Prova social
+
+O site exibe "Muito bem avaliado pelos alunos" e estrelas nos cards.
+
+- Classificação: **`DECORATIVE_RATING` + `MARKETING_CLAIM`**.
+- O `schema.org` **não** traz `aggregateRating` nem `review` em nenhum dos produtos.
+- Não há número de alunos, média, nem depoimento identificado publicado.
+
+O agente **não** pode afirmar quantidade de alunos, nota média, nem "X pessoas
+avaliaram". Pode repetir que a marca se descreve assim.
+
+---
+
+## Urgência
+
+O site usa: *"pode sair do ar a qualquer momento"*, *"os bônus disponíveis nesta etapa
+são limitados"*, *"Essa oferta pode não estar disponível depois"*.
+
+Não há contador regressivo, data-limite nem estoque declarado. O agente pode
+reproduzir a condição como está escrita e **nunca** inventar prazo ou escassez.
+
+---
+
+## CTAs vigentes
+
+"Comprar agora" · "Garantir meu acesso agora" · "Ver detalhes do ebook" ·
+"Quero a coleção" (âncora, não compra).
+
+---
+
+*Reconstruído em 2026-08-27 (F2.7). Versão anterior preservada no histórico do Brain.*
+*Conteúdo de estratégia e roadmap movido para `OFFER_STRATEGY_INTERNAL.md`.*

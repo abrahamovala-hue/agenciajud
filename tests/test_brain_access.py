@@ -244,13 +244,46 @@ def test_agente_criativo_nao_ganha_acesso_indevido(repo) -> None:
     assert resultado.filtered_out.get("fora_da_whitelist", 0) > 0
 
 
-def test_whitelist_do_brain_espelha_a_do_lexical() -> None:
-    """A F2 nao pode conceder acesso novo a ninguem."""
+def test_whitelist_do_brain_e_a_do_lexical_mais_concessao_explicita() -> None:
+    """Nenhum acesso novo aparece por acidente.
+
+    Ate a F2.5 a igualdade era exata: o Brain via exatamente o que o lexical
+    via. A F2.7 trouxe documentos que NAO existem em `docs/` (os ebooks e as
+    fichas derivadas deles), entao a whitelist herdada nao tem como falar
+    deles.
+
+    O invariante que substitui a igualdade e mais forte do que parece: tudo
+    que um agente ve alem do lexical precisa estar escrito, por nome, em
+    `BRAIN_NATIVE_GRANTS`. Nao existe caminho que conceda por default.
+    """
 
     from agents.knowledge_policies import KNOWLEDGE_POLICIES
+    from brain.access_policy import native_grants
 
     for agent_id, politica in KNOWLEDGE_POLICIES.items():
-        assert resolve_access(agent_id).external_keys == frozenset(d.key for d in politica.documents), agent_id
+        herdadas = frozenset(d.key for d in politica.documents)
+        concedidas = native_grants(agent_id)
+        vistas = resolve_access(agent_id).external_keys
+        assert vistas == herdadas | concedidas, agent_id
+        # O extra e exatamente o que foi concedido, nunca mais que isso.
+        assert (vistas or frozenset()) - herdadas == concedidas, agent_id
+
+
+def test_material_pago_so_para_quem_tem_can_know_paid() -> None:
+    """Concessao de ebook e `can_know_paid` nao podem divergir.
+
+    Se um agente ganhasse a chave sem o flag, o documento seria filtrado no
+    disclosure — silenciosamente, e o sintoma seria "o agente nao acha nada".
+    Se ganhasse o flag sem a chave, teria permissao sem conteudo.
+    """
+
+    from agents.knowledge_policies import KNOWLEDGE_POLICIES
+    from brain.access_policy import native_grants
+
+    ebooks = {"EBOOK_RECHEIOS", "EBOOK_CASQUINHAS", "EBOOK_LASCAS"}
+    for agent_id in KNOWLEDGE_POLICIES:
+        tem_ebook = bool(ebooks & native_grants(agent_id))
+        assert tem_ebook == resolve_access(agent_id).can_know_paid, agent_id
 
 
 # --- 3. CAN_KNOW nao e uma coisa so ----------------------------------------

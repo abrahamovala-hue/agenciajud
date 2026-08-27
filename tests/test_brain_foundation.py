@@ -68,10 +68,14 @@ def test_migrations_criam_todas_as_tabelas(engine) -> None:
 def test_migrations_sao_idempotentes(engine) -> None:
     """Roda todo boot. Segunda execucao nao pode aplicar nada de novo."""
 
+    from db.migrations.runner import MIGRATIONS
+
     primeira = run_migrations(engine)
     segunda = run_migrations(engine)
 
-    assert primeira == [1, 2, 3]
+    # Contra o registro, nao contra um numero escrito a mao: cada migration
+    # nova quebrava este teste sem que nada estivesse errado.
+    assert primeira == [m.version for m in MIGRATIONS]
     assert segunda == []
     assert pending_migrations(engine) == []
 
@@ -79,9 +83,11 @@ def test_migrations_sao_idempotentes(engine) -> None:
 def test_historico_registra_versao_nome_e_checksum(engine) -> None:
     run_migrations(engine)
 
+    from db.migrations.runner import MIGRATIONS
+
     aplicadas = applied_versions(engine)
 
-    assert set(aplicadas) == {1, 2, 3}
+    assert set(aplicadas) == {m.version for m in MIGRATIONS}
     assert all(len(checksum) == 16 for checksum in aplicadas.values())
 
 

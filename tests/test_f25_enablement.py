@@ -161,9 +161,13 @@ def test_em_dev_o_legacy_continua_completo(dev) -> None:
 def test_brain_enxerga_tudo_mesmo_com_legacy_congelado(producao, store) -> None:
     """As duas decisoes sao separadas: o arquivo chegar, e o agente ver."""
 
+    from brain.backfill import _catalogo
+
     _repo, relatorio = store
 
-    assert relatorio.total == 79
+    # Contra o catalogo, nao contra um numero: a F2.7 adicionou
+    # OFFER_STRATEGY_INTERNAL e o total mudou sem que nada estivesse errado.
+    assert relatorio.total == len(_catalogo())
     assert not is_legacy_visible("OFFERS")
 
 
@@ -232,10 +236,17 @@ def test_migration_003_e_reversivel_e_registra_o_que_fez() -> None:
 
 
 def test_distribuicao_final_por_camada(store) -> None:
-    _repo, relatorio = store
+    from brain.backfill import _catalogo
 
-    assert relatorio.by_layer() == {"L0": 55, "L2": 11, "L3": 13}
-    assert sum(relatorio.by_layer().values()) == 79
+    _repo, relatorio = store
+    camadas = relatorio.by_layer()
+
+    # L0 e L2 estao congelados desde a F2.5; L3 cresce quando um documento de
+    # negocio novo entra. E por isso que so os dois primeiros sao numeros.
+    assert camadas["L0"] == 55
+    assert camadas["L2"] == 11
+    assert camadas["L3"] >= 13
+    assert sum(camadas.values()) == len(_catalogo())
 
 
 def test_reconciliacao_corrige_camada_sem_criar_versao(store) -> None:
@@ -409,9 +420,13 @@ def test_review_packet_lista_o_que_exige_a_judith(store) -> None:
     repo, _ = store
     itens = {item.key: item for item in build_review_packet(repo)}
 
-    # OFFERS tem "A VERIFICAR" sobre a colecao completa.
-    assert itens["OFFERS"].needs_judith
-    assert any("linha" in ponto for ponto in itens["OFFERS"].needs_judith)
+    # A F2.7 resolveu documentalmente o "A VERIFICAR" da colecao completa, e
+    # OFFERS deixou de ter pendencia marcada dentro do texto. O packet
+    # continua tendo que apontar pendencia onde ela existe — hoje, nos
+    # documentos que ainda se declaram template.
+    pendentes = [chave for chave, item in itens.items() if item.needs_judith]
+    assert pendentes, "o packet parou de detectar qualquer pendencia — provavelmente quebrou"
+    assert all("linha" in ponto for chave in pendentes for ponto in itens[chave].needs_judith)
 
 
 def test_template_nunca_e_recomendado_para_aprovacao(store) -> None:
@@ -434,7 +449,12 @@ def test_packet_aponta_onde_o_mesmo_valor_aparece(store) -> None:
     repo, _ = store
     itens = {item.key: item for item in build_review_packet(repo)}
 
-    assert "PRODUCTS" in itens["OFFERS"].conflicts or "OFFERS" in itens["PRODUCTS"].conflicts
+    # Ate a F2.7 PRODUCTS e OFFERS carregavam os mesmos precos, e o packet
+    # apontava a duplicacao. A canonicalizacao removeu preco de PRODUCTS: um
+    # dado volatil passou a ter um dono so. Entao a ausencia deste conflito e
+    # agora o resultado CORRETO, e e isso que este teste trava.
+    assert "PRODUCTS" not in itens["OFFERS"].conflicts
+    assert "OFFERS" not in itens["PRODUCTS"].conflicts
 
 
 # --- E. Shadow comparison ---------------------------------------------------
@@ -500,18 +520,41 @@ def test_shadow_nao_altera_nada(store, dev) -> None:
 # --- F. Nenhum agente foi plugado no Brain ----------------------------------
 
 
-def test_nenhum_agente_usa_o_brain() -> None:
-    """O cutover nao acontece na F2.5, e isto garante."""
+#: O Disclosure Gate e a UNICA parte do Brain que a orquestracao pode usar
+#: antes do cutover. Ele nao e retrieval: nao busca, nao devolve conhecimento,
+#: nao muda o que o agente sabe. Ele so inspeciona o texto ja escrito antes de
+#: sair. Bloquear vazamento de conteudo pago nao pode esperar o cutover.
+_IMPORTS_DE_BRAIN_PERMITIDOS: dict[str, tuple[str, ...]] = {
+    "orchestration\\workflows\\answer_dm.py": ("brain.disclosure_gate", "brain.access_policy"),
+    "orchestration/workflows/answer_dm.py": ("brain.disclosure_gate", "brain.access_policy"),
+}
 
+
+def test_nenhum_agente_usa_retrieval_do_brain() -> None:
+    """O cutover de RETRIEVAL nao acontece na F2.5 nem na F2.7, e isto garante.
+
+    A lista de excecoes e nominal e minima: um modulo so, e so para o gate de
+    saida. Qualquer import de `brain.retrieval`, `brain.repository` ou
+    `brain.backfill` em agente ou workflow e cutover disfarcado.
+    """
+
+    import re
     from pathlib import Path
 
-    ofensores = []
+    proibidos = ("brain.retrieval", "brain.repository", "brain.backfill", "brain.ingestion")
+    ofensores: list[str] = []
+
     for arquivo in list(Path("agents").rglob("*.py")) + list(Path("orchestration").rglob("*.py")):
         texto = arquivo.read_text(encoding="utf-8")
-        if "from brain" in texto or "import brain" in texto:
-            ofensores.append(str(arquivo))
+        modulos = set(re.findall(r"(?:from|import)\s+(brain(?:\.[\w.]+)?)", texto))
+        if not modulos:
+            continue
+        permitidos = set(_IMPORTS_DE_BRAIN_PERMITIDOS.get(str(arquivo), ()))
+        nao_autorizados = modulos - permitidos
+        if nao_autorizados or any(p in modulos for p in proibidos):
+            ofensores.append(f"{arquivo}: {sorted(modulos)}")
 
-    assert ofensores == [], f"agente/orquestracao passou a depender do Brain: {ofensores}"
+    assert ofensores == [], f"dependencia nao autorizada do Brain: {ofensores}"
 
 
 def test_retriever_de_producao_continua_o_lexical(dev) -> None:

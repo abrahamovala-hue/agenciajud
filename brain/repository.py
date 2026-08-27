@@ -35,6 +35,7 @@ from brain.models import (
     transition_allowed,
 )
 from brain.schema import (
+    build_artifacts_table,
     build_chunks_table,
     build_conflicts_table,
     build_documents_table,
@@ -66,6 +67,7 @@ class KnowledgeRepository:
         self.versions: Table = build_versions_table(self.metadata)
         self.chunks: Table = build_chunks_table(self.metadata)
         self.conflicts: Table = build_conflicts_table(self.metadata)
+        self.artifacts: Table = build_artifacts_table(self.metadata)
 
     # --- schema ------------------------------------------------------------
 
@@ -230,6 +232,161 @@ class KnowledgeRepository:
                     )
                 )
         return len(pedacos)
+
+    # --- F2.7: artifact original -------------------------------------------
+
+    def store_artifact(
+        self,
+        *,
+        source_id: str,
+        filename: str,
+        content: bytes,
+        sha256: str,
+        mime_type: str = "application/pdf",
+        page_count: int | None = None,
+        normalized_sha256: str | None = None,
+        source_authority: str = "USER_AUTHORIZED_PRIMARY_SOURCE",
+        provided_by: str | None = None,
+        capture_date: datetime | None = None,
+        extraction_warnings: list[str] | None = None,
+    ) -> tuple[str, bool]:
+        """Guarda o arquivo original. Idempotente por sha256.
+
+        Devolve (artifact_id, criado). Reingerir o MESMO arquivo devolve o id
+        existente e `criado=False` — o artifact e imutavel, entao nao ha
+        UPDATE de `content` aqui nem em lugar nenhum.
+        """
+
+        with self.engine.begin() as conexao:
+            existente = conexao.execute(
+                select(self.artifacts.c.artifact_id).where(self.artifacts.c.sha256 == sha256)
+            ).first()
+            if existente:
+                return str(existente[0]), False
+
+            artifact_id = _id("art")
+            conexao.execute(
+                insert(self.artifacts).values(
+                    artifact_id=artifact_id,
+                    source_id=source_id,
+                    filename=filename,
+                    mime_type=mime_type,
+                    sha256=sha256,
+                    normalized_sha256=normalized_sha256,
+                    size_bytes=len(content),
+                    page_count=page_count,
+                    content=content,
+                    source_authority=source_authority,
+                    provided_by=provided_by,
+                    capture_date=capture_date,
+                    extraction_warnings=extraction_warnings,
+                    created_at=_now(),
+                )
+            )
+        return artifact_id, True
+
+    def get_artifact_metadata(self, artifact_id: str) -> dict[str, Any] | None:
+        """Metadados do artifact, SEM os bytes.
+
+        Separado de proposito: quase todo uso quer provar identidade (hash,
+        paginas, tamanho), nao ler o PDF. Carregar 14 MB para isso seria
+        desperdicio, e mais um lugar por onde conteudo pago circula sem
+        necessidade.
+        """
+
+        colunas = [c for c in self.artifacts.c if c.name != "content"]
+        with self.engine.begin() as conexao:
+            linha = conexao.execute(
+                select(*colunas).where(self.artifacts.c.artifact_id == artifact_id)
+            ).mappings().first()
+            return dict(linha) if linha else None
+
+    def list_artifacts(self) -> list[dict[str, Any]]:
+        colunas = [c for c in self.artifacts.c if c.name != "content"]
+        with self.engine.begin() as conexao:
+            return [dict(linha) for linha in conexao.execute(select(*colunas)).mappings()]
+
+    def artifact_bytes(self, artifact_id: str) -> bytes | None:
+        """Os bytes originais. Unico caminho — usado por reprocessamento.
+
+        Nao existe rota de API que exponha isto, e nenhum agente o chama.
+        """
+
+        with self.engine.begin() as conexao:
+            linha = conexao.execute(
+                select(self.artifacts.c.content).where(self.artifacts.c.artifact_id == artifact_id)
+            ).first()
+            return bytes(linha[0]) if linha else None
+
+    # --- F2.7: chunks ja segmentados ---------------------------------------
+
+    def write_chunks(self, *, version_id: str, status: str, chunks: list[dict[str, Any]]) -> int:
+        """Grava chunks que JA vieram segmentados por quem entende o formato.
+
+        `rebuild_chunks` corta markdown por cabecalho. Um ebook em PDF nao tem
+        cabecalho de markdown — a unidade e a receita, e quem sabe onde uma
+        receita termina e `brain/recipes.py`, nao um cortador generico. Por
+        isso este caminho existe: o chamador entrega os pedacos prontos, com
+        `recipe_id` e `page`, e aqui so acontece a persistencia.
+        """
+
+        topics_por_documento: dict[str, list[str]] = {}
+        with self.engine.begin() as conexao:
+            conexao.execute(delete(self.chunks).where(self.chunks.c.version_id == version_id))
+            for ordinal, pedaco in enumerate(chunks, start=1):
+                corpo = str(pedaco["body"])
+                deteccao = scan_injection(corpo)
+                documento = str(pedaco.get("document_id") or "")
+                if documento and documento not in topics_por_documento:
+                    topics_por_documento[documento] = self._document_topics(documento)
+                conexao.execute(
+                    insert(self.chunks).values(
+                        chunk_id=_id("chk"),
+                        version_id=version_id,
+                        ordinal=ordinal,
+                        heading=pedaco.get("heading"),
+                        body=corpo,
+                        token_count=max(1, len(corpo) // 4),
+                        topics=list(pedaco.get("topics") or topics_por_documento.get(documento, [])),
+                        status=status,
+                        checksum=checksum_of(corpo),
+                        flags=deteccao.as_json() or None,
+                        content_kind=pedaco.get("content_kind"),
+                        page=pedaco.get("page"),
+                        recipe_id=pedaco.get("recipe_id"),
+                        heading_path=pedaco.get("heading_path"),
+                        entitlement_scope=pedaco.get("entitlement_scope"),
+                    )
+                )
+        return len(chunks)
+
+    def set_document_provenance(
+        self,
+        *,
+        document_id: str,
+        source_authority: str | None = None,
+        provided_by: str | None = None,
+        entitlement_scope: str | None = None,
+        artifact_id: str | None = None,
+    ) -> None:
+        """Preenche a procedencia. Nao toca status nem conteudo."""
+
+        valores = {
+            chave: valor
+            for chave, valor in (
+                ("source_authority", source_authority),
+                ("provided_by", provided_by),
+                ("entitlement_scope", entitlement_scope),
+                ("artifact_id", artifact_id),
+            )
+            if valor is not None
+        }
+        if not valores:
+            return
+        with self.engine.begin() as conexao:
+            conexao.execute(
+                update(self.documents).where(self.documents.c.document_id == document_id).values(**valores)
+            )
 
     def reconcile_metadata(
         self,
@@ -445,6 +602,11 @@ class KnowledgeRepository:
                 self.chunks.c.token_count,
                 self.chunks.c.flags,
                 self.chunks.c.status.label("chunk_status"),
+                self.chunks.c.content_kind,
+                self.chunks.c.page,
+                self.chunks.c.recipe_id,
+                self.chunks.c.heading_path,
+                self.chunks.c.entitlement_scope,
                 self.versions.c.version_id,
                 self.versions.c.version,
                 self.versions.c.approved_by,
@@ -459,6 +621,8 @@ class KnowledgeRepository:
                 self.documents.c.confidence,
                 self.documents.c.valid_to,
                 self.documents.c.deprecated_by,
+                self.documents.c.source_authority,
+                self.documents.c.provided_by,
                 self.sources.c.source_id,
                 self.sources.c.kind.label("source_kind"),
                 self.sources.c.origin,
