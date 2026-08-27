@@ -477,3 +477,15 @@ def test_ensure_table_e_idempotente(repo) -> None:
     repo.ensure_table()
 
     assert repo.get("task-migration") is not None
+
+
+def test_count_reflete_as_execucoes(repo) -> None:
+    """`count()` alimenta a linha de boot que torna a persistencia verificavel."""
+
+    assert repo.count() == 0
+
+    repo.save(_log(task_id="c1"))
+    repo.save(_log(task_id="c2"))
+    repo.save(_log(task_id="c1", status="failed"))  # regravacao, nao nova linha
+
+    assert repo.count() == 2

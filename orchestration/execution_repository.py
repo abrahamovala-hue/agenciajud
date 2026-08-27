@@ -78,6 +78,7 @@ from sqlalchemy import (
     Table,
     Text,
     cast,
+    func,
     literal,
     select,
 )
@@ -360,6 +361,12 @@ class ExecutionRepository:
 
     # --- leitura -----------------------------------------------------------
 
+    def count(self) -> int:
+        """Quantas execucoes ja foram registradas."""
+
+        with self.engine.begin() as conexao:
+            return int(conexao.execute(select(func.count()).select_from(self.table)).scalar_one())
+
     def get(self, task_id: str) -> dict[str, Any] | None:
         with self.engine.begin() as conexao:
             linha = conexao.execute(select(self.table).where(self.table.c.task_id == task_id)).mappings().first()
@@ -483,7 +490,11 @@ def ensure_execution_log_table(db: Any) -> None:
         repositorio = ExecutionRepository(db.db_engine, schema=db.db_schema)
         repositorio.ensure_table()
         set_execution_repository(repositorio)
-        log_info(f"judith_execution_logs pronto em {db.db_schema}.{TABLE_NAME}")
+        # Contagem no boot: uma consulta barata que torna a persistencia
+        # verificavel so pelo log, sem abrir endpoint nem expor conteudo.
+        log_info(
+            f"judith_execution_logs pronto em {db.db_schema}.{TABLE_NAME} ({repositorio.count()} execucoes registradas)"
+        )
     except SQLAlchemyError as exc:
         log_error(f"nao foi possivel preparar {TABLE_NAME}: {exc}")
 
@@ -499,6 +510,8 @@ def persist_execution(log: ExecutionLog) -> bool:
 
     try:
         get_execution_repository().save(log)
+        # Metadado apenas — nunca a mensagem nem a resposta.
+        log_info(f"execution log gravado: {log.task_id} {log.workflow} status={log.status} canal={log.channel}")
         return True
     except Exception as exc:  # noqa: BLE001
         log_error(f"falha ao persistir execution log {log.task_id} ({log.workflow}): {type(exc).__name__}: {exc}")
