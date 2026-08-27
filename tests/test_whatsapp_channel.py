@@ -70,8 +70,8 @@ def _fake_answer_dm(monkeypatch, *, outputs: dict[str, Any], escalations: bool =
             self.outputs = outputs
             self.escalations = ["x"] if escalations else []
 
-    def fake_run(message: str, *, session_id=None, user_id=None, task_id=None):
-        chamadas.append({"message": message, "session_id": session_id, "user_id": user_id})
+    def fake_run(message: str, *, session_id=None, user_id=None, task_id=None, channel="internal"):
+        chamadas.append({"message": message, "session_id": session_id, "user_id": user_id, "channel": channel})
         return FakeLog(), None
 
     monkeypatch.setattr(ch, "run_answer_dm", fake_run)

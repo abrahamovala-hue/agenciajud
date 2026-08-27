@@ -25,6 +25,7 @@ from agno.workflow import Step, Workflow
 from agno.workflow.types import HumanReview, StepInput, StepOutput
 
 from orchestration.execution_log import ExecutionLog
+from orchestration.execution_repository import persist_execution
 from typing import cast
 
 from orchestration.handoff import AgentStepDecision, ReviewDecision
@@ -294,26 +295,36 @@ def run_create_reel(
     log.inputs["tema"] = tema
     log.inputs["objetivo"] = objetivo
 
-    cmo_decision = _cmo_gate(log, log.task_id, tema, objetivo)
-    if not cmo_decision.approved:
-        log.finish(status="rejected", result=f"CMO rejeitou o objetivo: {cmo_decision.decision}")
-        return log, validate_workflow(log, QC_SPEC_FULL)
+    try:
+        cmo_decision = _cmo_gate(log, log.task_id, tema, objetivo)
+        if not cmo_decision.approved:
+            log.finish(status="rejected", result=f"CMO rejeitou o objetivo: {cmo_decision.decision}")
+            resultado = validate_workflow(log, QC_SPEC_FULL)
+            persist_execution(log)
+            return log, resultado
 
-    workflow = _build_pipeline(log, log.task_id, tema, objetivo)
-    run_output = workflow.run(input=f"Tema: {tema}\nObjetivo: {objetivo}")
+        workflow = _build_pipeline(log, log.task_id, tema, objetivo)
+        run_output = workflow.run(input=f"Tema: {tema}\nObjetivo: {objetivo}")
 
-    qc_pre_approval = log.outputs.get("qc_pre_approval")
-    if qc_pre_approval is not None and not qc_pre_approval.is_valid:
-        log.finish(status="rejected", result="Quality Control interrompeu: processo incompleto.")
-    elif run_output.is_paused:
-        log.finish(status="pending_human_approval", result="Aguardando aprovacao final da Judith.")
-    elif run_output.status == RunStatus.completed:
-        # Nao deveria acontecer sem passar por pending_human_approval - se
-        # acontecer, e um bug (a etapa human_approval nao pausou como
-        # deveria) e o proprio Quality Control (QC_SPEC_FULL,
-        # requires_human_approval=True) vai acusar isso.
-        log.finish(status="completed", result="Workflow reportou completed sem pausa de aprovacao humana.")
-    else:
-        log.finish(status="failed", result=f"status inesperado: {run_output.status}")
+        qc_pre_approval = log.outputs.get("qc_pre_approval")
+        if qc_pre_approval is not None and not qc_pre_approval.is_valid:
+            log.finish(status="rejected", result="Quality Control interrompeu: processo incompleto.")
+        elif run_output.is_paused:
+            log.finish(status="pending_human_approval", result="Aguardando aprovacao final da Judith.")
+        elif run_output.status == RunStatus.completed:
+            # Nao deveria acontecer sem passar por pending_human_approval - se
+            # acontecer, e um bug (a etapa human_approval nao pausou como
+            # deveria) e o proprio Quality Control (QC_SPEC_FULL,
+            # requires_human_approval=True) vai acusar isso.
+            log.finish(status="completed", result="Workflow reportou completed sem pausa de aprovacao humana.")
+        else:
+            log.finish(status="failed", result=f"status inesperado: {run_output.status}")
+    except Exception as exc:
+        # Execucao que morre no meio continua auditavel.
+        log.finish(status="failed", error=f"{type(exc).__name__}: {exc}")
+        persist_execution(log)
+        raise
 
-    return log, validate_workflow(log, QC_SPEC_FULL)
+    resultado = validate_workflow(log, QC_SPEC_FULL)
+    persist_execution(log)
+    return log, resultado

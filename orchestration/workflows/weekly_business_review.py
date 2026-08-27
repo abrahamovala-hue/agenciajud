@@ -20,6 +20,7 @@ from agno.workflow import Parallel, Step, Workflow
 from agno.workflow.types import StepInput, StepOutput
 
 from orchestration.execution_log import ExecutionLog
+from orchestration.execution_repository import persist_execution
 from orchestration.handoff import AgentStepDecision, WeeklyReportDecision
 from orchestration.quality_control import QualityControlResult, WorkflowSpec, validate_workflow
 from orchestration.step_helpers import run_agent_step
@@ -141,15 +142,22 @@ def run_weekly_business_review(
     log = ExecutionLog(workflow=WORKFLOW_NAME, task_id=task_id) if task_id else ExecutionLog(workflow=WORKFLOW_NAME)
     log.inputs["fixtures_used"] = list(fixtures.keys())
 
-    workflow = _build_workflow(log, log.task_id, fixtures)
-    run_output = workflow.run(input="Gerar Weekly Business Review")
-
     from agno.run.base import RunStatus
 
-    if run_output.status == RunStatus.completed:
-        report = log.outputs.get("weekly_report")
-        log.finish(status="completed", result=report.decision if report else None)
-    else:
-        log.finish(status="failed", result=f"status inesperado: {run_output.status}")
+    try:
+        workflow = _build_workflow(log, log.task_id, fixtures)
+        run_output = workflow.run(input="Gerar Weekly Business Review")
 
-    return log, validate_workflow(log, QC_SPEC)
+        if run_output.status == RunStatus.completed:
+            report = log.outputs.get("weekly_report")
+            log.finish(status="completed", result=report.decision if report else None)
+        else:
+            log.finish(status="failed", result=f"status inesperado: {run_output.status}")
+    except Exception as exc:
+        log.finish(status="failed", error=f"{type(exc).__name__}: {exc}")
+        persist_execution(log)
+        raise
+
+    resultado = validate_workflow(log, QC_SPEC)
+    persist_execution(log)
+    return log, resultado

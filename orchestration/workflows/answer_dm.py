@@ -39,6 +39,7 @@ from orchestration.evidence_gate import (
     strip_internal_references,
 )
 from orchestration.execution_log import ExecutionLog
+from orchestration.execution_repository import persist_execution
 from orchestration.handoff import AgentHandoff, AgentStepDecision, RoutingDecision
 from orchestration.quality_control import QualityControlResult, WorkflowSpec, validate_workflow
 from orchestration.step_helpers import run_agent_step
@@ -337,31 +338,48 @@ def run_answer_dm(
     task_id: str | None = None,
     session_id: str | None = None,
     user_id: str | None = None,
+    channel: str = "internal",
 ) -> tuple[ExecutionLog, QualityControlResult]:
     """Executa o workflow ANSWER_DM de ponta a ponta para uma mensagem.
 
     `session_id`/`user_id` mantem a conversa separada por pessoa quando a
     chamada vem de um canal real (WhatsApp). Sem eles o comportamento e o
     de antes: execucao isolada, sem historico.
+
+    `user_id` ja chega anonimizado do canal (`wa_<hash>`) — e ele que vai
+    para `user_ref` no rastro persistido. Telefone bruto nao passa por aqui.
     """
 
     log = ExecutionLog(workflow=WORKFLOW_NAME, task_id=task_id) if task_id else ExecutionLog(workflow=WORKFLOW_NAME)
     log.inputs["message"] = message
+    log.channel = channel
+    log.session_id = session_id
+    log.user_ref = user_id
 
-    workflow = _build_workflow(log, log.task_id, message, session_id=session_id, user_id=user_id)
-    run_output = workflow.run(input=message)
+    try:
+        workflow = _build_workflow(log, log.task_id, message, session_id=session_id, user_id=user_id)
+        run_output = workflow.run(input=message)
 
-    evidence_status = log.outputs.get("evidence_status")
+        evidence_status = log.outputs.get("evidence_status")
 
-    if log.outputs.get("route_to") == "human-escalation" or evidence_status == "HUMAN_REQUIRED":
-        log.finish(status="pending_human_approval", result=log.outputs.get("outbound_message"))
-    elif evidence_status in {"NEEDS_EVIDENCE", "REJECTED"}:
-        # A resposta do agente nao sai. O que sai e a frase natural de espera.
-        log.finish(status="rejected", result=log.outputs.get("outbound_message"))
-    elif run_output.status == RunStatus.completed:
-        log.finish(status="completed", result=log.outputs.get("outbound_message"))
-    else:
-        log.finish(status="failed", result=f"status inesperado: {run_output.status}")
+        if log.outputs.get("route_to") == "human-escalation" or evidence_status == "HUMAN_REQUIRED":
+            log.finish(status="pending_human_approval", result=log.outputs.get("outbound_message"))
+        elif evidence_status in {"NEEDS_EVIDENCE", "REJECTED"}:
+            # A resposta do agente nao sai. O que sai e a frase natural de espera.
+            log.finish(status="rejected", result=log.outputs.get("outbound_message"))
+        elif run_output.status == RunStatus.completed:
+            log.finish(status="completed", result=log.outputs.get("outbound_message"))
+        else:
+            log.finish(status="failed", result=f"status inesperado: {run_output.status}")
+    except Exception as exc:
+        # Execucao que morre no meio continua auditavel: fecha o log como
+        # "failed", persiste, e so entao deixa o erro subir. Sem isto, a falha
+        # — justamente o caso que mais interessa investigar — seria a unica
+        # que nao deixaria rastro.
+        log.finish(status="failed", error=f"{type(exc).__name__}: {exc}")
+        persist_execution(log)
+        raise
 
     result = validate_workflow(log, QC_SPEC)
+    persist_execution(log)
     return log, result

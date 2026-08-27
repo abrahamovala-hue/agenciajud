@@ -390,7 +390,10 @@ async def handle_message(message: dict, config: WhatsAppConfig) -> None:
                 run_answer_dm,
                 normalized.text,
                 session_id=session_id_for(phone),
+                # Ja e o hash (`wa_<sha256[:12]>`). O telefone nao atravessa
+                # esta fronteira — nem para o workflow, nem para o banco.
                 user_id=user_ref(phone),
+                channel="whatsapp",
             )
         finally:
             typing_task.cancel()

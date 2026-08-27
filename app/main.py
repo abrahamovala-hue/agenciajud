@@ -46,6 +46,7 @@ from agents.my_agent import my_agent  # noqa: E402
 from app.interfaces import build_interfaces  # noqa: E402
 from app.security import build_api_settings, install_authenticated_metadata_routes
 from db import get_postgres_db, repair_agentos_db_schema  # noqa: E402
+from orchestration.execution_repository import ensure_execution_log_table
 
 
 def _get_cors_allow_origins() -> list[str]:
@@ -80,6 +81,9 @@ if cors_allow_origins:
 # ---------------------------------------------------------------------------
 agentos_db = get_postgres_db()
 repair_agentos_db_schema(agentos_db)
+# Judith Brain F1: cria `judith_execution_logs` se faltar. Aditiva e
+# idempotente, no mesmo ponto onde os outros reparos de schema ja rodam.
+ensure_execution_log_table(agentos_db)
 
 agent_os = AgentOS(
     name="AgentOS",

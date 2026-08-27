@@ -10,9 +10,10 @@ chamam agent.run() diretamente - sempre passam por aqui.
 from __future__ import annotations
 
 import json
+from time import perf_counter
 from typing import Any, TypeVar, overload
 
-from orchestration.execution_log import ExecutionLog
+from orchestration.execution_log import ExecutionLog, StepUsage
 from orchestration.handoff import AgentHandoff, AgentStepDecision
 from orchestration.registry import get_agent
 
@@ -74,6 +75,77 @@ def _sources_in_tool_result(content: Any) -> list[str]:
         for entry in entries
         if isinstance(entry, dict) and entry.get("fonte") and entry.get("status") != "FONTE_NAO_DISPONIVEL"
     ]
+
+
+def _texto(valor: Any) -> str | None:
+    """So deixa passar string de verdade.
+
+    Existe porque `response` vem de fora: provider novo, dublê de teste ou
+    resposta parcial podem colocar qualquer coisa nesses campos, e um valor
+    inesperado nao pode virar erro de validacao no meio de um atendimento.
+    """
+
+    return valor if isinstance(valor, str) else None
+
+
+def _inteiro(valor: Any) -> int | None:
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) else None
+
+
+def _step_usage(
+    *,
+    agent: Any,
+    agent_id: str,
+    to_agent: str,
+    response: Any,
+    duration_ms: int,
+    error: str | None = None,
+) -> StepUsage:
+    """Le custo e latencia do `RunOutput` do Agno.
+
+    REGRA DESTA FUNCAO: ela nunca levanta. Metrica e observabilidade — se a
+    leitura falhar, o certo e perder a metrica, nunca a execucao que ja
+    produziu resposta para a cliente. Por isso todo campo passa por coercao
+    de tipo e o corpo inteiro tem rede de seguranca.
+    """
+
+    minimo = StepUsage(agent_id=agent_id, to_agent=to_agent, duration_ms=duration_ms, error=error)
+    try:
+        modelo = getattr(agent, "model", None)
+        metrics = getattr(response, "metrics", None)
+
+        def numero(nome: str) -> int | None:
+            return _inteiro(getattr(metrics, nome, None))
+
+        ferramentas = getattr(response, "tools", None)
+        duracao_modelo = getattr(metrics, "duration", None)
+        duracao = (
+            int(duracao_modelo * 1000)
+            if isinstance(duracao_modelo, (int, float)) and not isinstance(duracao_modelo, bool)
+            else duration_ms
+        )
+
+        return StepUsage(
+            agent_id=agent_id,
+            to_agent=to_agent,
+            model_id=_texto(getattr(response, "model", None)) or _texto(getattr(modelo, "id", None)),
+            model_provider=(
+                _texto(getattr(response, "model_provider", None)) or _texto(getattr(modelo, "provider", None))
+            ),
+            # Nao vem do RunOutput: e configuracao do Agent, e e justamente o
+            # que precisamos saber para comparar tiers depois.
+            reasoning_effort=_texto(getattr(modelo, "reasoning_effort", None)),
+            input_tokens=numero("input_tokens"),
+            output_tokens=numero("output_tokens"),
+            reasoning_tokens=numero("reasoning_tokens"),
+            cached_tokens=numero("cache_read_tokens"),
+            total_tokens=numero("total_tokens"),
+            tool_calls=len(ferramentas) if isinstance(ferramentas, (list, tuple)) else 0,
+            duration_ms=duracao,
+            error=error,
+        )
+    except Exception:  # noqa: BLE001
+        return minimo
 
 
 def _arg(raw: Any, key: str) -> str:
@@ -153,7 +225,34 @@ def run_agent_step(
     if user_id:
         run_kwargs["user_id"] = user_id
 
-    response = agent.run(message, output_schema=decision_schema, **run_kwargs)
+    inicio = perf_counter()
+    try:
+        response = agent.run(message, output_schema=decision_schema, **run_kwargs)
+    except Exception as exc:
+        # A chamada falhou: registra o custo/latencia do que houve e deixa o
+        # erro subir. Quem decide o que fazer com a falha e o workflow — aqui
+        # so garantimos que ela nao suma do rastro.
+        log.record_usage(
+            _step_usage(
+                agent=agent,
+                agent_id=agent_id,
+                to_agent=to_agent,
+                response=None,
+                duration_ms=int((perf_counter() - inicio) * 1000),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        )
+        raise
+
+    log.record_usage(
+        _step_usage(
+            agent=agent,
+            agent_id=agent_id,
+            to_agent=to_agent,
+            response=response,
+            duration_ms=int((perf_counter() - inicio) * 1000),
+        )
+    )
 
     decision = response.content
     if not isinstance(decision, decision_schema):
