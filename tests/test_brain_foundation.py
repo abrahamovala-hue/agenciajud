@@ -71,7 +71,7 @@ def test_migrations_sao_idempotentes(engine) -> None:
     primeira = run_migrations(engine)
     segunda = run_migrations(engine)
 
-    assert primeira == [1, 2]
+    assert primeira == [1, 2, 3]
     assert segunda == []
     assert pending_migrations(engine) == []
 
@@ -81,7 +81,7 @@ def test_historico_registra_versao_nome_e_checksum(engine) -> None:
 
     aplicadas = applied_versions(engine)
 
-    assert set(aplicadas) == {1, 2}
+    assert set(aplicadas) == {1, 2, 3}
     assert all(len(checksum) == 16 for checksum in aplicadas.values())
 
 
@@ -398,7 +398,8 @@ def test_camadas_seguem_a_taxonomia(backfill_feito) -> None:
     assert por_chave["OFFERS"].layer == "L3"
     assert por_chave["BUSINESS_RULES"].layer == "L3"
     assert por_chave["CRAFT_COPY"].layer == "L2"
-    assert por_chave["FICHA_01_CMO"].layer == "L2"
+    # F2.5: ficha de agente virou L0 SYSTEM, nao L2.
+    assert por_chave["FICHA_01_CMO"].layer == "L0"
 
 
 def test_relatorio_por_status_nao_esconde_nada(backfill_feito) -> None:

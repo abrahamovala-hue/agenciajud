@@ -17,8 +17,8 @@ ORDEM DAS DECISOES (importa)
     6. decide disclosure por resultado
     7. monta provenance
 
-O passo 6 nao pode vir antes do 5: o teto de excerto se aplica ao trecho que
-seria devolvido, nao ao documento inteiro.
+O passo 6 nao pode vir antes do 5: a policy e resolvida por resultado, com o
+`content_access` daquele documento — nao uma vez para a busca inteira.
 
 RELACAO COM O CAMINHO DE PRODUCAO ATUAL
 ---------------------------------------
@@ -43,7 +43,7 @@ from typing import Any
 # inutil — as diferencas viriam do tokenizador, nao da arquitetura.
 from agents.knowledge_sources import _normalize, _tokenize
 from brain.access_policy import AccessDenied, KnowledgeAccess, resolve_access
-from brain.models import DisclosureDecision, decide_disclosure
+from brain.models import DisclosurePolicy, decide_disclosure
 from brain.security import as_data_envelope
 
 DEFAULT_LIMIT = 4
@@ -103,7 +103,7 @@ class Provenance:
 class SearchHit:
     score: int
     provenance: Provenance
-    disclosure: DisclosureDecision
+    disclosure: DisclosurePolicy
     #: Corpo que o agente pode ver. Vazio quando `disclosure.withheld`.
     body: str
     #: Sinais do scanner de injecao, se houver. O corpo continua original.
@@ -113,8 +113,7 @@ class SearchHit:
         payload: dict[str, Any] = {
             **self.provenance.as_dict(),
             "conteudo": self.body,
-            "pode_revelar": self.disclosure.can_reveal,
-            "politica_de_divulgacao": self.disclosure.reason,
+            "divulgacao": self.disclosure.as_dict(),
         }
         if self.flags:
             payload["conteudo_suspeito"] = self.flags
@@ -215,12 +214,13 @@ def search(
 
         corpo = ""
         if include_body:
-            bruto = str(linha["body"])
-            # O teto de excerto e aplicado ao que sai, nao ao que existe.
-            if disclosure.can_reveal and disclosure.excerpt_chars is not None:
-                bruto = bruto[: disclosure.excerpt_chars]
+            # F2.5: o corpo NAO e mais truncado. Truncar mutilava o contexto
+            # de quem precisa raciocinar sobre o conteudo e nao impedia
+            # parafrase do que sobrava. A protecao real e o acesso (conteudo
+            # que o agente nao pode conhecer nem chega aqui); o que pode SAIR
+            # viaja como policy explicita ao lado. Ver brain/models.py.
             corpo = as_data_envelope(
-                bruto,
+                str(linha["body"]),
                 fonte=str(linha.get("external_key") or linha["document_id"]),
                 secao=str(linha.get("heading") or ""),
             )

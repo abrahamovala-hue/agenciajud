@@ -151,11 +151,12 @@ def rollback(engine: Engine, version: int, schema: str | None = None) -> None:
 
 # Registro. Importado no fim para evitar ciclo: os modulos de migration
 # importam `Migration` daqui.
-from db.migrations import m001_execution_logs, m002_knowledge_foundation
+from db.migrations import m001_execution_logs, m002_knowledge_foundation, m003_system_layer
 
 MIGRATIONS: tuple[Migration, ...] = (
     m001_execution_logs.MIGRATION,
     m002_knowledge_foundation.MIGRATION,
+    m003_system_layer.MIGRATION,
 )
 
 _versoes = [m.version for m in MIGRATIONS]

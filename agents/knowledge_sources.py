@@ -39,6 +39,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from agents.knowledge_scope import is_legacy_visible
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOCS_ROOT = PROJECT_ROOT / "docs"
 
@@ -410,7 +412,102 @@ BRAND_ARCHITECT_MISSING_SOURCES: tuple[MissingSource, ...] = (
 # ---------------------------------------------------------------------------
 
 _PT_STOPWORDS = frozenset(
-    ["a", "o", "as", "os", "um", "uma", "uns", "umas", "de", "do", "da", "dos", "das", "em", "no", "na", "nos", "nas", "por", "para", "com", "sem", "sob", "sobre", "e", "ou", "mas", "que", "qual", "quais", "quando", "onde", "como", "porque", "pois", "se", "ja", "nao", "sim", "ao", "aos", "pelo", "pela", "ser", "estar", "tem", "ter", "foi", "era", "sao", "isso", "isto", "aquilo", "esse", "essa", "este", "esta", "meu", "minha", "nosso", "nossa", "me", "te", "se", "lhe", "nos", "vos", "eu", "voce", "vc", "ele", "ela", "eles", "elas", "quero", "queria", "preciso", "pode", "posso", "deve", "mais", "menos", "muito", "pouco", "todo", "toda", "todos", "todas", "cada", "outro", "outra", "qualquer", "entao", "agora"]
+    [
+        "a",
+        "o",
+        "as",
+        "os",
+        "um",
+        "uma",
+        "uns",
+        "umas",
+        "de",
+        "do",
+        "da",
+        "dos",
+        "das",
+        "em",
+        "no",
+        "na",
+        "nos",
+        "nas",
+        "por",
+        "para",
+        "com",
+        "sem",
+        "sob",
+        "sobre",
+        "e",
+        "ou",
+        "mas",
+        "que",
+        "qual",
+        "quais",
+        "quando",
+        "onde",
+        "como",
+        "porque",
+        "pois",
+        "se",
+        "ja",
+        "nao",
+        "sim",
+        "ao",
+        "aos",
+        "pelo",
+        "pela",
+        "ser",
+        "estar",
+        "tem",
+        "ter",
+        "foi",
+        "era",
+        "sao",
+        "isso",
+        "isto",
+        "aquilo",
+        "esse",
+        "essa",
+        "este",
+        "esta",
+        "meu",
+        "minha",
+        "nosso",
+        "nossa",
+        "me",
+        "te",
+        "se",
+        "lhe",
+        "nos",
+        "vos",
+        "eu",
+        "voce",
+        "vc",
+        "ele",
+        "ela",
+        "eles",
+        "elas",
+        "quero",
+        "queria",
+        "preciso",
+        "pode",
+        "posso",
+        "deve",
+        "mais",
+        "menos",
+        "muito",
+        "pouco",
+        "todo",
+        "toda",
+        "todos",
+        "todas",
+        "cada",
+        "outro",
+        "outra",
+        "qualquer",
+        "entao",
+        "agora",
+    ]
 )
 
 
@@ -479,6 +576,18 @@ def read_document(key: str, sources: Sequence[DocumentSource]) -> dict[str, Any]
             "chaves_validas": sorted(catalog),
         }
 
+    if not is_legacy_visible(source.key):
+        # F2.5: o arquivo pode existir no container (o Brain precisa dele) sem
+        # que o caminho lexical possa servi-lo. Ver agents/knowledge_scope.py.
+        return {
+            "status": "FORA_DO_ESCOPO_ATUAL",
+            "documento": source.title,
+            "observacao": (
+                "Este documento existe, mas ainda nao foi liberado para consulta pelos agentes. "
+                "Nao invente o conteudo: diga que vai confirmar."
+            ),
+        }
+
     if not source.path.exists():
         # Documento catalogado mas ausente do disco: nunca fingir que leu.
         return {"status": "ARQUIVO_AUSENTE", "documento": source.title, "arquivo": source.relative_path}
@@ -513,7 +622,9 @@ def search_documents(
     results: list[tuple[int, dict[str, Any]]] = []
 
     for source in sources:
-        if not source.path.exists():
+        # F2.5: escopo do legacy antes de qualquer leitura. Congelado em
+        # producao ate o cutover — ver agents/knowledge_scope.py.
+        if not is_legacy_visible(source.key) or not source.path.exists():
             continue
 
         key_tokens = set(_tokenize(f"{source.key} {source.title} {source.summary}"))
@@ -568,7 +679,7 @@ def search_documents(
                     "Nenhum documento do repositorio cobre esta pergunta. Nao invente o dado: "
                     "diga que a fonte nao existe ou peca ao agente responsavel."
                 ),
-                "fontes_disponiveis": [source.key for source in sources],
+                "fontes_disponiveis": [source.key for source in sources if is_legacy_visible(source.key)],
             }
         )
 
@@ -618,6 +729,9 @@ def build_source_catalog(
                 "existe_em_disco": source.path.exists(),
             }
             for source in sources
+            # Nao anunciar catalogo que a busca nao vai servir: o agente
+            # tentaria abrir e receberia recusa, o que convida a inventar.
+            if is_legacy_visible(source.key)
         ],
         "fontes_nao_disponiveis": [
             {"fonte": gap.key, "descricao": gap.title, "motivo": gap.reason, "peca_para": gap.ask_agent}

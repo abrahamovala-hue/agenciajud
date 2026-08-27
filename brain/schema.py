@@ -84,6 +84,9 @@ def build_documents_table(metadata: MetaData) -> Table:
         metadata,
         Column("document_id", String, primary_key=True, nullable=False),
         Column("source_id", String, nullable=False),
+        # Caminho do arquivo de origem DESTE documento. A fonte guarda a raiz
+        # (`docs/`); sem isto nao da para auditar de qual arquivo a linha veio.
+        Column("source_ref", String, nullable=True),
         # A chave do DocumentSource antigo (BRAND, OFFERS, ...). E o que liga
         # o store novo ao caminho lexical de producao durante o periodo em que
         # os dois rodam em paralelo, e o que torna a comparacao possivel.

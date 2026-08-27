@@ -104,6 +104,8 @@ class DocumentMap:
     chunks: int
     checksum: str
     flagged_chunks: int = 0
+    reconciled: dict[str, tuple[str, str]] = field(default_factory=dict)
+    """O que mudou de classificacao sem mudar o conteudo. Vazio no caso normal."""
 
 
 @dataclass
@@ -146,6 +148,7 @@ class BackfillReport:
             "bloqueados_por_segredo": len(self.blocked),
             "ausentes_em_disco": len(self.missing_on_disk),
             "inalterados": len(self.skipped_unchanged),
+            "reclassificados": sum(1 for item in self.mapped if item.reconciled),
             "confirmados_automaticamente": 0,
         }
 
@@ -199,6 +202,17 @@ def run_backfill(repository: KnowledgeRepository, *, created_by: str = "backfill
 
         existente = repository.get_document_by_external_key(chave)
         if existente and existente["checksum"] == checksum:
+            # Conteudo igual, mas a CLASSIFICACAO pode ter mudado (a L0 da
+            # F2.5 e exatamente esse caso). Sem isto, o documento ficaria com
+            # a camada velha para sempre, porque o checksum nunca muda.
+            alteracoes = repository.reconcile_metadata(
+                document_id=existente["document_id"],
+                layer=camada,
+                topics=topics,
+                content_access=acesso,
+                source_ref=documento.relative_path,
+                title=documento.title,
+            )
             atual = repository.get_current_version(existente["document_id"])
             relatorio.skipped_unchanged.append(chave)
             if atual:
@@ -210,12 +224,13 @@ def run_backfill(repository: KnowledgeRepository, *, created_by: str = "backfill
                         document_id=existente["document_id"],
                         version_id=atual["version_id"],
                         version=int(atual["version"]),
-                        layer=str(existente["layer"]),
+                        layer=camada,
                         status=str(existente["status"]),
-                        content_access=str(existente["content_access"]),
-                        topics=list(existente["topics"] or []),
+                        content_access=acesso,
+                        topics=list(topics),
                         chunks=0,
                         checksum=checksum,
+                        reconciled=alteracoes,
                     )
                 )
             continue
@@ -229,6 +244,7 @@ def run_backfill(repository: KnowledgeRepository, *, created_by: str = "backfill
                 content_access=acesso,
                 checksum=checksum,
                 external_key=chave,
+                source_ref=documento.relative_path,
                 topics=topics,
                 confidence=confidence_for(documento.reliability),
             )

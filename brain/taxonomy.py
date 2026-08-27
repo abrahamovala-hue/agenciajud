@@ -8,23 +8,25 @@ a partir do caminho e da chave. Nenhum LLM, nenhuma inferencia de conteudo:
     topics         -> etiquetas para filtro
     content_access -> quem pode ver o conteudo entregue
 
-UMA DECISAO QUE PRECISA DE VOCE
--------------------------------
+A CAMADA L0 SYSTEM (F2.5)
+-------------------------
 
-As tres camadas do briefing sao L1 (Judith), L2 (profissional curado) e L3
-(fato do negocio). O corpus atual tem uma quarta natureza que nao cabe bem em
-nenhuma: as 21 fichas de agente, os protocolos, os models e o roster. Eles nao
-sao fato comercial (L3) nem oficio generico (L2) — sao a documentacao do
-proprio sistema.
+A F2 tinha tres camadas e uma pilha de documentos que nao cabiam em nenhuma:
+as 21 fichas de agente, os protocolos, os models, os workflows, o roster. Eles
+ficaram em L2 com topic `sistema`, o que era um remendo — L2 e "oficio curado"
+e uma ficha de agente nao e oficio.
 
-Estao classificados como **L2 com topic `sistema`**, e nao como L3, por uma
-razao concreta: em `brain/conflicts.py` a precedencia poe Business acima de
-tudo. Se um protocolo entrasse como L3, uma regra de processo poderia ganhar
-de um preco. Como L2 + topic `sistema`, eles ficam filtraveis e fora do
-caminho do fato comercial.
+Agora eles tem camada propria. O ganho nao e organizacional, e de seguranca:
+**L0 e o ultimo na precedencia** (`brain/conflicts.py`). Uma ficha de agente
+que cita "R$ 47" como exemplo nunca pode virar fonte de preco. Enquanto
+estavam em L2, competiam com o craft; agora nao competem com nada que fale do
+negocio.
 
-Se a Judith quiser uma camada propria para isso (um L0/SYSTEM), a mudanca e
-uma migration aditiva e uma linha aqui.
+O que NAO virou L0, por instrucao explicita: preco, produto, politica e
+tecnica da Judith. `brand/`, `sources/` e `BUSINESS_RULES` continuam L3.
+`knowledge/craft/` continua L2 — aquilo e oficio de verdade, e o proprio
+catalogo diz: "Conhecimento GERAL de oficio. Nao e fato sobre a Bem me Que."
+
 """
 
 from __future__ import annotations
@@ -44,11 +46,16 @@ _LAYER_RULES: tuple[tuple[str, Layer], ...] = (
     # L2 — oficio generico. O proprio catalogo ja diz destes: "Conhecimento
     # GERAL de oficio. Nao e fato sobre a Bem me Que."
     ("JUDITH-AI-TEAM-V2/knowledge/craft/", "L2"),
-    # L2 + sistema — documentacao do proprio time de agentes.
-    ("JUDITH-AI-TEAM-V2/agents/", "L2"),
-    ("JUDITH-AI-TEAM-V2/protocol/", "L2"),
-    ("JUDITH-AI-TEAM-V2/models/", "L2"),
-    ("JUDITH-AI-TEAM/agents/", "L2"),
+    # L0 — como a propria IA funciona. Fichas de agente, protocolos, models,
+    # orquestracao. Os "playbooks" V1 entram aqui tambem: apesar do nome, sao
+    # definicao de papel ("Voce e o Hook Finder da Bem me Que"), nao oficio.
+    ("JUDITH-AI-TEAM-V2/agents/", "L0"),
+    ("JUDITH-AI-TEAM-V2/protocol/", "L0"),
+    ("JUDITH-AI-TEAM-V2/models/", "L0"),
+    ("JUDITH-AI-TEAM-V2/workflows/", "L0"),
+    ("JUDITH-AI-TEAM/agents/", "L0"),
+    ("JUDITH-AI-TEAM/workflows/", "L0"),
+    ("JUDITH-AI-TEAM/docs/", "L0"),
     # L3 — fato operacional do negocio.
     ("JUDITH-AI-TEAM/brand/", "L3"),
     ("JUDITH-AI-TEAM/sources/", "L3"),
@@ -56,18 +63,20 @@ _LAYER_RULES: tuple[tuple[str, Layer], ...] = (
 
 #: Chaves cuja camada nao se resolve pelo caminho.
 _LAYER_BY_KEY: dict[str, Layer] = {
+    # Regra vinculante do negocio: preco, garantia, politica de venda.
     "BUSINESS_RULES": "L3",
-    "PRD": "L3",
-    "STATUS": "L3",
-    "STATUS_V2": "L2",
-    "AGENT_ROSTER": "L2",
-    "ORCHESTRATION_V2": "L2",
-    "HANDOFF_EXAMPLES": "L2",
-    "WORKFLOWS_V2_INDEX": "L2",
-    "EVALS_README": "L2",
-    "VIDEO_EDIT_SPEC": "L2",
-    "VIDEO_ENGINE_PLAN": "L3",
-    "DECISION_CARD": "L3",
+    # Documentacao do projeto de IA, nao do negocio de chocolate.
+    "PRD": "L0",
+    "STATUS": "L0",
+    "STATUS_V2": "L0",
+    "AGENT_ROSTER": "L0",
+    "ORCHESTRATION_V2": "L0",
+    "HANDOFF_EXAMPLES": "L0",
+    "WORKFLOWS_V2_INDEX": "L0",
+    "EVALS_README": "L0",
+    "VIDEO_EDIT_SPEC": "L0",
+    "VIDEO_ENGINE_PLAN": "L0",
+    "DECISION_CARD": "L0",
 }
 
 _DEFAULT_LAYER: Layer = "L2"
@@ -80,9 +89,6 @@ def layer_for(*, key: str, relative_path: str) -> Layer:
     for prefixo, camada in _LAYER_RULES:
         if caminho.startswith(prefixo):
             return camada
-    # Workflows V1 e o resto de JUDITH-AI-TEAM.
-    if caminho.startswith("JUDITH-AI-TEAM/workflows/"):
-        return "L2"
     return _DEFAULT_LAYER
 
 
@@ -94,7 +100,7 @@ _TOPIC_RULES: tuple[tuple[str, str], ...] = (
     ("JUDITH-AI-TEAM-V2/agents/", "sistema"),
     ("JUDITH-AI-TEAM-V2/protocol/", "sistema"),
     ("JUDITH-AI-TEAM-V2/models/", "sistema"),
-    ("JUDITH-AI-TEAM/agents/", "playbook"),
+    ("JUDITH-AI-TEAM/agents/", "sistema"),
     ("JUDITH-AI-TEAM/brand/", "marca"),
     ("JUDITH-AI-TEAM/sources/", "pesquisa"),
     ("JUDITH-AI-TEAM/workflows/", "workflow"),
@@ -166,4 +172,4 @@ def content_access_for(*, key: str, relative_path: str) -> ContentAccess:
 
 
 def source_kind_for(layer: Layer) -> str:
-    return {"L1": "judith", "L2": "professional", "L3": "business"}[layer]
+    return {"L0": "system", "L1": "judith", "L2": "professional", "L3": "business"}[layer]

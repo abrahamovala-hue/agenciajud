@@ -22,9 +22,11 @@ from brain.access_policy import (
     AccessDenied,
     resolve_access,
 )
-from brain.models import SUPPORT_USE_EXCERPT_CHARS, decide_disclosure
+from brain.models import DEFAULT_VERBATIM_LIMITS, decide_disclosure
 from brain.repository import KnowledgeRepository, checksum_of
 from brain.retrieval import DEFAULT_LIMIT, compare_with_lexical, search
+
+SUPPORT_USE_LIMITE = DEFAULT_VERBATIM_LIMITS["SUPPORT_USE"]
 from brain.security import DATA_CLOSE, DATA_OPEN
 
 # --- Store de teste ---------------------------------------------------------
@@ -251,41 +253,54 @@ def test_whitelist_do_brain_espelha_a_do_lexical() -> None:
         assert resolve_access(agent_id).external_keys == frozenset(d.key for d in politica.documents), agent_id
 
 
-# --- 3. CAN_KNOW != CAN_REVEAL ---------------------------------------------
+# --- 3. CAN_KNOW nao e uma coisa so ----------------------------------------
 
 
 def test_internal_only_pode_ser_conhecido_mas_nunca_revelado() -> None:
-    decisao = decide_disclosure(content_access="INTERNAL_ONLY", agent_is_customer_facing=True, agent_can_know_paid=True)
+    """Nem resumido: resumir documento interno para a cliente E revelar."""
 
-    assert decisao.can_know is True
-    assert decisao.can_reveal is False
+    policy = decide_disclosure(content_access="INTERNAL_ONLY", agent_is_customer_facing=True, agent_can_know_paid=True)
+
+    assert policy.can_know is True
+    assert policy.can_summarize is False
+    assert policy.can_quote is False
+    assert policy.max_verbatim_chars == 0
 
 
-def test_support_use_nao_significa_entrega_integral() -> None:
-    decisao = decide_disclosure(content_access="SUPPORT_USE", agent_is_customer_facing=True, agent_can_know_paid=False)
+def test_support_use_permite_sintese_controlada() -> None:
+    """Suporte pode explicar. Nao pode despejar metodo nem receita."""
 
-    assert decisao.can_reveal is True
-    assert decisao.excerpt_chars == SUPPORT_USE_EXCERPT_CHARS
+    policy = decide_disclosure(content_access="SUPPORT_USE", agent_is_customer_facing=True, agent_can_know_paid=False)
+
+    assert policy.can_summarize is True
+    assert policy.can_quote is True
+    assert policy.max_verbatim_chars == SUPPORT_USE_LIMITE
+    assert policy.can_reveal_full_method is False
+    assert policy.can_reveal_full_recipe is False
 
 
 def test_entitlement_required_conhecivel_mas_nao_entregavel() -> None:
     """O caso do ebook: suporte precisa saber, nao pode despejar."""
 
-    decisao = decide_disclosure(
+    policy = decide_disclosure(
         content_access="ENTITLEMENT_REQUIRED", agent_is_customer_facing=True, agent_can_know_paid=True
     )
 
-    assert decisao.can_know is True
-    assert decisao.can_reveal is False
-    assert "compra verificada" in decisao.reason
+    assert policy.can_know is True
+    assert policy.can_summarize is True
+    assert policy.can_quote is True
+    assert policy.can_reveal_full_method is False
+    assert policy.can_reveal_full_recipe is False
+    assert policy.requires_entitlement is True
+    assert "compra verificada" in policy.reason
 
 
 def test_entitlement_required_e_invisivel_para_quem_nao_pode_conhecer() -> None:
-    decisao = decide_disclosure(
+    policy = decide_disclosure(
         content_access="ENTITLEMENT_REQUIRED", agent_is_customer_facing=True, agent_can_know_paid=False
     )
 
-    assert decisao.withheld is True
+    assert policy.withheld is True
 
 
 def test_conteudo_pago_nao_chega_ao_agente_sem_permissao(repo) -> None:
@@ -314,8 +329,12 @@ def test_conteudo_pago_nao_chega_ao_agente_sem_permissao(repo) -> None:
     assert resultado.filtered_out.get("conteudo_pago_sem_permissao", 0) == 1
 
 
-def test_excerto_de_support_use_e_cortado_de_verdade(repo) -> None:
-    """Instrucao no prompt e pedido. Corte e garantia."""
+def test_corpo_nao_e_mais_truncado(repo) -> None:
+    """Mudanca da F2.5: truncar mutilava o contexto de quem precisa raciocinar.
+
+    A protecao virou a policy explicita ao lado, e o teto passou a valer para
+    CITACAO LITERAL — nao para o que o agente le.
+    """
 
     corpo_longo = "## Precos\n\n" + ("O ebook Recheios custa R$ 97,00 com garantia de 7 dias. " * 40)
     _documento(
@@ -328,16 +347,23 @@ def test_excerto_de_support_use_e_cortado_de_verdade(repo) -> None:
         aprovar=True,
     )
 
-    resultado = search(agent_id="customer-support-agent", query="preco ebook garantia", repository=repo)
+    hit = search(agent_id="customer-support-agent", query="preco ebook garantia", repository=repo).hits[0]
+    entre = hit.body.split(DATA_OPEN, 1)[1].split(DATA_CLOSE, 1)[0]
+    corpo_entregue = entre.split("\n", 1)[1]
+    assert len(corpo_entregue) > SUPPORT_USE_LIMITE, "o corpo continua truncado"
+    assert hit.disclosure.max_verbatim_chars == SUPPORT_USE_LIMITE
+    assert hit.as_dict()["divulgacao"]["maximo_de_citacao_literal"] == SUPPORT_USE_LIMITE
 
-    assert resultado.hits
-    conteudo = resultado.hits[0].body
-    entre_marcadores = conteudo.split(DATA_OPEN, 1)[1].split(DATA_CLOSE, 1)[0]
-    # Tira a linha de cabecalho do envelope antes de medir.
-    corpo_entregue = entre_marcadores.split("\n", 1)[1]
 
-    assert len(corpo_entregue) <= SUPPORT_USE_EXCERPT_CHARS + 1
-    assert len(corpo_entregue) < len(corpo_longo)
+def test_teto_de_citacao_literal_e_verificavel() -> None:
+    """O mecanismo existe pronto para o gate de saida da F3."""
+
+    from brain.models import verbatim_violation
+
+    policy = decide_disclosure(content_access="SUPPORT_USE", agent_is_customer_facing=True, agent_can_know_paid=False)
+
+    assert verbatim_violation("x" * (SUPPORT_USE_LIMITE + 1), policy) is True
+    assert verbatim_violation("x" * 10, policy) is False
 
 
 def test_agentes_que_falam_com_cliente_sao_explicitos() -> None:

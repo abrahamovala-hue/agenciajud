@@ -1,6 +1,9 @@
 .DS_Store
 
-docs
+# `docs` NAO entra aqui desde a F2.5. O Judith Brain precisa dos 79 markdown
+# dentro do container para backfillar em producao. O que impede os agentes de
+# passarem a enxergar tudo de uma vez e o escopo do retriever lexical
+# (agents/knowledge_scope.py), nao a ausencia do arquivo.
 .git
 
 # Cache

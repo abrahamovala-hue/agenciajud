@@ -117,6 +117,7 @@ class KnowledgeRepository:
         content_access: ContentAccess,
         checksum: str,
         external_key: str | None = None,
+        source_ref: str | None = None,
         language: str = "pt-BR",
         topics: tuple[str, ...] = (),
         confidence: str | None = None,
@@ -129,6 +130,7 @@ class KnowledgeRepository:
                 insert(self.documents).values(
                     document_id=doc_id,
                     source_id=source_id,
+                    source_ref=source_ref,
                     external_key=external_key,
                     title=title,
                     language=language,
@@ -228,6 +230,72 @@ class KnowledgeRepository:
                     )
                 )
         return len(pedacos)
+
+    def reconcile_metadata(
+        self,
+        *,
+        document_id: str,
+        layer: str,
+        topics: tuple[str, ...],
+        content_access: str,
+        source_ref: str | None,
+        title: str,
+    ) -> dict[str, tuple[str, str]]:
+        """Alinha classificacao sem criar versao nova.
+
+        Camada, topics e content_access sao DERIVADOS da taxonomia, nao do
+        conteudo. Quando a taxonomia muda (a L0 da F2.5, por exemplo), o
+        checksum do arquivo continua igual e o backfill pularia o documento —
+        deixando a classificacao velha no banco para sempre.
+
+        Devolve o que mudou, para o relatorio nao ser silencioso. Status NUNCA
+        entra aqui: status e aprovacao humana, nao classificacao.
+        """
+
+        atual = self.get_document(document_id)
+        if atual is None:
+            raise ValueError(f"documento {document_id} nao existe")
+
+        alteracoes: dict[str, tuple[str, str]] = {}
+        novos: dict[str, Any] = {}
+        for campo, novo_valor in (
+            ("layer", layer),
+            ("content_access", content_access),
+            ("source_ref", source_ref),
+            ("title", title),
+        ):
+            if atual.get(campo) != novo_valor:
+                alteracoes[campo] = (str(atual.get(campo)), str(novo_valor))
+                novos[campo] = novo_valor
+
+        if list(atual.get("topics") or []) != list(topics):
+            alteracoes["topics"] = (str(atual.get("topics")), str(list(topics)))
+            novos["topics"] = list(topics)
+
+        if not novos:
+            return {}
+
+        novos["updated_at"] = _now()
+        with self.engine.begin() as conexao:
+            conexao.execute(update(self.documents).where(self.documents.c.document_id == document_id).values(**novos))
+        # Os chunks carregam topics; realinha sem tocar no corpo.
+        if "topics" in novos:
+            versoes = self._version_ids(document_id)
+            if versoes:
+                with self.engine.begin() as conexao:
+                    conexao.execute(
+                        update(self.chunks).where(self.chunks.c.version_id.in_(versoes)).values(topics=list(topics))
+                    )
+        return alteracoes
+
+    def _version_ids(self, document_id: str) -> list[str]:
+        with self.engine.begin() as conexao:
+            return [
+                str(v)
+                for v in conexao.execute(
+                    select(self.versions.c.version_id).where(self.versions.c.document_id == document_id)
+                ).scalars()
+            ]
 
     def set_status(
         self,

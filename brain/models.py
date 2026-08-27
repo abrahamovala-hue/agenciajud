@@ -14,14 +14,47 @@ APROVACAO HUMANA. Um documento pode ser perfeitamente estavel e nunca ter
 sido lido pela Judith.
 
 Nenhuma funcao deste modulo promove nada para CONFIRMED. Nao existe caminho
-de codigo que faca isso: `confirm_document()` exige `approved_by` de um
-humano nomeado, e nada no backfill chama essa funcao.
+de codigo que faca isso: a unica porta e `KnowledgeRepository.approve_version()`,
+que exige um humano nomeado, e o backfill nao a chama.
 
-**CAN_KNOW != CAN_REVEAL.** Poder consultar um conteudo para responder certo
-nao autoriza entregar o conteudo. Um agente de suporte precisa saber o que o
-ebook ensina para nao contradizer o produto; isso nao o autoriza a colar o
-capitulo na conversa. As duas perguntas tem respostas separadas em
-`DisclosureDecision`.
+CAN_KNOW NAO E UMA COISA SO
+---------------------------
+
+Poder consultar um conteudo para responder certo nao autoriza entregar o
+conteudo — mas tambem nao proibe tudo. Um agente de suporte precisa saber o
+que o ebook ensina para nao contradizer o produto, pode dizer "esse ebook
+cobre temperagem com pontos exatos de temperatura", pode citar uma frase
+curta, e nao pode entregar o metodo nem a receita.
+
+Isso e um leque, nao um booleano. `DisclosurePolicy` separa:
+
+    can_know                  consultar para raciocinar
+    can_summarize             descrever o conteudo com as proprias palavras
+    can_quote                 citar literalmente, dentro de max_verbatim_chars
+    can_reveal_full_method    entregar a tecnica completa
+    can_reveal_full_recipe    entregar a receita completa
+    requires_entitlement      so com compra verificada
+
+O QUE MUDOU NA F2.5, E O QUE ISSO CUSTA
+---------------------------------------
+
+A F2 protegia material pago truncando o corpo em 600 caracteres antes de
+entregar ao agente. Determinístico, mas errado como mecanismo principal:
+mutila o contexto de quem precisa RACIOCINAR sobre o conteudo e, mesmo
+assim, nao impede o modelo de parafrasear o que sobrou.
+
+Agora a protecao mora em tres lugares, nesta ordem de forca:
+
+1. **Acesso** — conteudo que o agente nao pode conhecer nao e entregue.
+   Continua determinístico, e continua sendo a garantia real.
+2. **Policy explicita** — viaja junto do trecho, dizendo o que pode sair.
+3. **`max_verbatim_chars`** — teto de CITACAO LITERAL, verificavel por
+   `verbatim_violation()`.
+
+O custo, dito com todas as letras: (2) depende de o modelo obedecer. A
+checagem que tornaria isso determinístico seria um gate pos-geracao, no
+espirito do Evidence Gate — fora do escopo da F2.5. `verbatim_violation()`
+ja existe para esse gate chamar quando for construido.
 """
 
 from __future__ import annotations
@@ -31,18 +64,25 @@ from typing import Literal, get_args
 
 # --- Camadas ----------------------------------------------------------------
 
-Layer = Literal["L1", "L2", "L3"]
+Layer = Literal["L0", "L1", "L2", "L3"]
 LAYERS: tuple[Layer, ...] = get_args(Layer)
 
 LAYER_NAMES: dict[Layer, str] = {
+    "L0": "SYSTEM — como a propria IA funciona (fichas, protocolos, evals, arquitetura)",
     "L1": "JUDITH — o que a Judith sabe, pensa, ensina ou definiu",
     "L2": "PROFESSIONAL — conhecimento de oficio curado deliberadamente",
     "L3": "BUSINESS — fato operacional do negocio (produto, preco, politica)",
 }
 
+#: L0 existe para NAO competir com verdade comercial. Um protocolo de
+#: colaboracao nao pode ganhar de um preco, nem quando cita um. Por isso ele
+#: entra por ultimo na precedencia (brain/conflicts.py) e nao serve como
+#: evidencia sobre o negocio.
+SYSTEM_LAYER: Layer = "L0"
+
 # --- Fonte ------------------------------------------------------------------
 
-SourceKind = Literal["judith", "professional", "business"]
+SourceKind = Literal["system", "judith", "professional", "business"]
 SOURCE_KINDS: tuple[SourceKind, ...] = get_args(SourceKind)
 
 Origin = Literal["upload", "manual", "url", "repository", "sync"]
@@ -71,32 +111,43 @@ ALLOWED_TRANSITIONS: dict[DocStatus, frozenset[DocStatus]] = {
 
 Confidence = Literal["alto", "medio", "baixo"]
 
-# --- Disclosure (conteudo pago) ---------------------------------------------
+# --- Disclosure -------------------------------------------------------------
 
 ContentAccess = Literal["INTERNAL_ONLY", "SUPPORT_USE", "PUBLIC", "ENTITLEMENT_REQUIRED"]
 CONTENT_ACCESS_LEVELS: tuple[ContentAccess, ...] = get_args(ContentAccess)
 
 CONTENT_ACCESS_MEANING: dict[ContentAccess, str] = {
     "INTERNAL_ONLY": "So para raciocinio interno. Nunca vai para a cliente, nem resumido.",
-    "SUPPORT_USE": "Suporte e venda podem usar para responder. Entrega em trecho curto, nunca integral.",
+    "SUPPORT_USE": "Suporte e venda podem usar e sintetizar. Citacao literal curta.",
     "PUBLIC": "Pode ser entregue como esta. Preco e link publicos entram aqui.",
-    "ENTITLEMENT_REQUIRED": "Material pago. Conhecivel internamente; entrega exige compra verificada.",
+    "ENTITLEMENT_REQUIRED": (
+        "Material pago. Conhecivel e sintetizavel por quem atende; metodo e receita completos exigem compra verificada."
+    ),
 }
 
-#: Teto de caracteres que SUPPORT_USE pode entregar de uma vez.
-#: E o unico mecanismo determinístico de "nao despeje o produto inteiro" que
-#: existe: instrucao no prompt e pedido, corte e garantia.
-SUPPORT_USE_EXCERPT_CHARS = 600
+#: Teto de CITACAO LITERAL, por nivel. Nao e truncamento do que o agente le —
+#: e quanto do texto original pode sair entre aspas. Numero pequeno de
+#: proposito: citacao curta prova a fonte; citacao longa entrega o produto.
+DEFAULT_VERBATIM_LIMITS: dict[ContentAccess, int | None] = {
+    "PUBLIC": None,  # sem limite
+    "SUPPORT_USE": 320,
+    "ENTITLEMENT_REQUIRED": 200,
+    "INTERNAL_ONLY": 0,
+}
 
 
 @dataclass(frozen=True)
-class DisclosureDecision:
-    """O que o agente pode fazer com um conteudo que ele PODE consultar."""
+class DisclosurePolicy:
+    """O que pode sair de um conteudo que o agente pode consultar."""
 
     can_know: bool
-    can_reveal: bool
-    #: Quantos caracteres do corpo podem ser entregues. None = sem limite.
-    excerpt_chars: int | None
+    can_summarize: bool
+    can_quote: bool
+    #: Maximo de caracteres de citacao LITERAL. None = sem limite; 0 = nada.
+    max_verbatim_chars: int | None
+    can_reveal_full_method: bool
+    can_reveal_full_recipe: bool
+    requires_entitlement: bool
     reason: str
 
     @property
@@ -105,9 +156,25 @@ class DisclosureDecision:
 
         return not self.can_know
 
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "pode_consultar": self.can_know,
+            "pode_sintetizar": self.can_summarize,
+            "pode_citar": self.can_quote,
+            "maximo_de_citacao_literal": self.max_verbatim_chars,
+            "pode_entregar_metodo_completo": self.can_reveal_full_method,
+            "pode_entregar_receita_completa": self.can_reveal_full_recipe,
+            "exige_compra_verificada": self.requires_entitlement,
+            "motivo": self.reason,
+        }
+
 
 def transition_allowed(atual: DocStatus, novo: DocStatus) -> bool:
     return novo in ALLOWED_TRANSITIONS[atual]
+
+
+def _limite(content_access: ContentAccess, override: int | None) -> int | None:
+    return DEFAULT_VERBATIM_LIMITS[content_access] if override is None else override
 
 
 def decide_disclosure(
@@ -116,52 +183,124 @@ def decide_disclosure(
     agent_is_customer_facing: bool,
     agent_can_know_paid: bool,
     entitlement_verified: bool = False,
-) -> DisclosureDecision:
-    """Resolve CAN_KNOW e CAN_REVEAL. Deterministico, sem LLM.
+    max_verbatim_chars: int | None = None,
+) -> DisclosurePolicy:
+    """Resolve a policy de divulgacao. Deterministico, sem LLM.
 
     `entitlement_verified` existe para o dia em que houver verificacao de
     compra. Hoje nenhum chamador passa True — nao ha integracao de pagamento,
     e fingir que ha seria pior do que nao ter.
     """
 
+    limite = _limite(content_access, max_verbatim_chars)
+
     if content_access == "PUBLIC":
-        return DisclosureDecision(True, True, None, "Conteudo publico.")
+        return DisclosurePolicy(
+            can_know=True,
+            can_summarize=True,
+            can_quote=True,
+            max_verbatim_chars=limite,
+            can_reveal_full_method=True,
+            can_reveal_full_recipe=True,
+            requires_entitlement=False,
+            reason="Conteudo publico: pode ser entregue como esta.",
+        )
 
     if content_access == "INTERNAL_ONLY":
-        # Conhecivel por quem trabalha internamente; nunca entregue.
-        return DisclosureDecision(
+        # Conhecivel por quem trabalha internamente; nada sai — nem resumo.
+        # Resumir um documento interno para a cliente E revelar o documento.
+        return DisclosurePolicy(
             can_know=True,
-            can_reveal=False,
-            excerpt_chars=0,
-            reason="Documento interno: serve para decidir, nunca para entregar a cliente.",
+            can_summarize=False,
+            can_quote=False,
+            max_verbatim_chars=0,
+            can_reveal_full_method=False,
+            can_reveal_full_recipe=False,
+            requires_entitlement=False,
+            reason="Documento interno: serve para decidir, nunca para entregar a cliente, nem resumido.",
         )
 
     if content_access == "SUPPORT_USE":
         if not agent_is_customer_facing:
-            return DisclosureDecision(True, False, 0, "Uso de suporte: agente nao fala com cliente.")
-        return DisclosureDecision(
+            return DisclosurePolicy(
+                can_know=True,
+                can_summarize=False,
+                can_quote=False,
+                max_verbatim_chars=0,
+                can_reveal_full_method=False,
+                can_reveal_full_recipe=False,
+                requires_entitlement=False,
+                reason="Uso de suporte: este agente nao fala com a cliente, entao nao entrega nada.",
+            )
+        return DisclosurePolicy(
             can_know=True,
-            can_reveal=True,
-            excerpt_chars=SUPPORT_USE_EXCERPT_CHARS,
-            reason=f"Uso de suporte: no maximo {SUPPORT_USE_EXCERPT_CHARS} caracteres por vez, nunca o documento inteiro.",
+            can_summarize=True,
+            can_quote=True,
+            max_verbatim_chars=limite,
+            # Mesmo em SUPPORT_USE: descrever a oferta nao e despejar o
+            # material. Metodo e receita completos nunca saem por aqui.
+            can_reveal_full_method=False,
+            can_reveal_full_recipe=False,
+            requires_entitlement=False,
+            reason=(
+                f"Uso de suporte: pode explicar e sintetizar; citacao literal ate {limite} caracteres. "
+                "Metodo e receita completos ficam de fora."
+            ),
         )
 
     # ENTITLEMENT_REQUIRED
     if not agent_can_know_paid:
-        return DisclosureDecision(
+        return DisclosurePolicy(
             can_know=False,
-            can_reveal=False,
-            excerpt_chars=0,
+            can_summarize=False,
+            can_quote=False,
+            max_verbatim_chars=0,
+            can_reveal_full_method=False,
+            can_reveal_full_recipe=False,
+            requires_entitlement=True,
             reason="Material pago: este agente nao tem permissao nem para consultar.",
         )
+
     if entitlement_verified:
-        return DisclosureDecision(True, True, None, "Material pago com compra verificada.")
-    return DisclosureDecision(
+        return DisclosurePolicy(
+            can_know=True,
+            can_summarize=True,
+            can_quote=True,
+            max_verbatim_chars=None,
+            can_reveal_full_method=True,
+            can_reveal_full_recipe=True,
+            requires_entitlement=True,
+            reason="Material pago com compra verificada.",
+        )
+
+    # O default conservador do material pago: da para atender bem sem
+    # entregar o produto.
+    return DisclosurePolicy(
         can_know=True,
-        can_reveal=False,
-        excerpt_chars=0,
+        can_summarize=True,
+        can_quote=True,
+        max_verbatim_chars=limite,
+        can_reveal_full_method=False,
+        can_reveal_full_recipe=False,
+        requires_entitlement=True,
         reason=(
-            "Material pago: pode ser consultado para responder corretamente, mas o conteudo "
-            "nao pode ser entregue sem compra verificada. Nao existe verificacao de compra ainda."
+            "Material pago: pode ser consultado e descrito para responder corretamente, com citacao "
+            f"literal de ate {limite} caracteres. Metodo e receita completos exigem compra verificada, "
+            "e nao existe verificacao de compra ainda."
         ),
     )
+
+
+def verbatim_violation(text: str, policy: DisclosurePolicy) -> bool:
+    """O texto passa do teto de citacao literal?
+
+    Existe para o gate de saida que ainda nao foi construido. Nenhum caminho
+    da F2.5 o chama para bloquear — declarar isso e mais honesto do que
+    deixar parecer que a checagem ja esta ligada.
+    """
+
+    if not policy.can_quote:
+        return bool(text.strip())
+    if policy.max_verbatim_chars is None:
+        return False
+    return len(text) > policy.max_verbatim_chars

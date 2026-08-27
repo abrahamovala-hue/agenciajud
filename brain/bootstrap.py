@@ -56,12 +56,21 @@ def ensure_knowledge_store(db: Any) -> None:
         repositorio = KnowledgeRepository(db.db_engine, schema=db.db_schema)
         set_knowledge_repository(repositorio)
 
+        # O escopo do legacy e a unica coisa entre `docs/` no container e 77
+        # documentos novos aparecendo para 20 agentes. Vai para o log de boot
+        # para que o estado seja verificavel sem abrir o banco.
+        from agents.knowledge_scope import scope_report
+
+        escopo = scope_report()
+        log_info(f"legacy knowledge scope: {escopo['scope']} (origem={escopo['origem']})")
+
         relatorio = run_backfill(repositorio)
         resumo = relatorio.summary()
         log_info(
             f"judith brain: {resumo['documentos']} documentos, {resumo['chunks']} chunks, "
             f"status={resumo['por_status']}, camadas={resumo['por_camada']}, "
             f"bloqueados_por_segredo={resumo['bloqueados_por_segredo']}, "
+            f"reclassificados={resumo['reclassificados']}, "
             f"confirmados_automaticamente={resumo['confirmados_automaticamente']}"
         )
         if relatorio.blocked:

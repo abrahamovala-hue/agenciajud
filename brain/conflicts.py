@@ -19,7 +19,8 @@ PRECEDENCIA (para conflito ENTRE autoridades)
     1. Business CONFIRMED     (fato operacional do negocio)
     2. Judith CONFIRMED       (o que a Judith ensina/definiu)
     3. Professional CONFIRMED (oficio curado)
-    4. modelo geral           (fora do Brain)
+    4. System                 (como a IA funciona — nunca sobre o negocio)
+    5. modelo geral           (fora do Brain)
 
 Isso resolve "o craft diz X, o BUSINESS_RULES diz Y" — vence o negocio.
 
@@ -49,7 +50,11 @@ from sqlalchemy import insert, select, update
 from brain.models import Layer
 
 #: Ordem de autoridade. Menor numero = mais forte.
-LAYER_PRECEDENCE: dict[Layer, int] = {"L3": 1, "L1": 2, "L2": 3}
+#:
+#: L0 (SYSTEM) e o ultimo de proposito: documentacao de como a IA funciona
+#: nunca pode ganhar de um fato do negocio. Uma ficha de agente que menciona
+#: um preco de exemplo nao vira fonte de preco.
+LAYER_PRECEDENCE: dict[Layer, int] = {"L3": 1, "L1": 2, "L2": 3, "L0": 4}
 
 #: Camadas onde resolucao automatica e PROIBIDA, mesmo que o codigo
 #: soubesse decidir. Fato comercial errado chega na cliente como preco errado.
