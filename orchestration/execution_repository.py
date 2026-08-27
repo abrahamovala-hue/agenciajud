@@ -487,8 +487,15 @@ def ensure_execution_log_table(db: Any) -> None:
     """
 
     try:
+        # F2: quem cria o schema agora e o runner de migrations, para que toda
+        # mudanca tenha versao e historico. A migration 001 faz exatamente o
+        # mesmo create-if-not-exists que a F1 fazia — em producao ela e no-op,
+        # porque a tabela ja existe com dado.
+        from db.migrations import run_migrations
+
+        run_migrations(db.db_engine, schema=db.db_schema)
+
         repositorio = ExecutionRepository(db.db_engine, schema=db.db_schema)
-        repositorio.ensure_table()
         set_execution_repository(repositorio)
         # Contagem no boot: uma consulta barata que torna a persistencia
         # verificavel so pelo log, sem abrir endpoint nem expor conteudo.
