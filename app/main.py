@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from agno.os import AgentOS
+from agno.utils.log import log_warning
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -42,11 +43,12 @@ from agents.judith_team import (
     video_editor,
     visual_creative,
 )
-from agents.my_agent import my_agent  # noqa: E402
-from app.interfaces import build_interfaces  # noqa: E402
+from agents.my_agent import my_agent
+from app.admin_ingestion import install_admin_ingestion
+from app.interfaces import build_interfaces
 from app.security import build_api_settings, install_authenticated_metadata_routes
 from brain.bootstrap import ensure_knowledge_store
-from db import get_postgres_db, repair_agentos_db_schema  # noqa: E402
+from db import get_postgres_db, repair_agentos_db_schema
 from orchestration.execution_repository import ensure_execution_log_table
 
 
@@ -132,6 +134,17 @@ agent_os = AgentOS(
 # F0.5: `/` e `/info` sairam da superficie anonima. Precisa ser antes do
 # `get_app()`; ver a docstring da funcao para o porque.
 install_authenticated_metadata_routes(base_app, agent_os, api_settings)
+
+# F2.7: rota administrativa de ingestao, so quando ADMIN_INGESTION_ENABLED
+# estiver ligada. Desligada (o padrao) ela NAO e registrada — nao e uma
+# checagem dentro do handler, o endpoint nao existe. Ver app/admin_ingestion.py
+# para os caminhos que foram testados antes de chegar nisto.
+_ingestao_admin_ativa = install_admin_ingestion(base_app, api_settings)
+if _ingestao_admin_ativa:
+    # Vai para o log de boot de proposito: uma rota administrativa ligada
+    # precisa ser visivel sem abrir o codigo, e o log e o que prova que ela
+    # foi desligada depois.
+    log_warning("ADMIN_INGESTION_ENABLED=true: rota administrativa de ingestao ATIVA. Desligue apos importar.")
 
 app = agent_os.get_app()
 
