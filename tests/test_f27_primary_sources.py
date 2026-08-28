@@ -333,6 +333,30 @@ class TestReparoDeGlifo:
         assert lascas is not None
         assert "Aula 4" in lascas.document.text
 
+    def test_sem_byte_de_controle_no_texto(self) -> None:
+        """PostgreSQL recusa NUL em campo text; SQLite aceita em silencio.
+
+        Este teste existe porque a suite local passou e a primeira gravacao em
+        producao falhou com "cannot contain NUL bytes". O banco de teste
+        escondeu o que o banco real encontrou — entao a checagem passa a viver
+        aqui, e nao so no Postgres.
+        """
+
+        for item in achados().classified:
+            texto = item.document.text
+            assert chr(0) not in texto, item.spec.key
+            permitidos = (10, 13, 9)  # LF, CR, TAB
+            proibidos = [c for c in texto if ord(c) < 32 and ord(c) not in permitidos]
+            assert proibidos == [], item.spec.key
+
+    def test_remocao_de_controle_e_contada(self) -> None:
+        """Normalizacao silenciosa e o que esta fase existe para nao fazer."""
+
+        lascas = achados().by_key("EBOOK_LASCAS")
+        assert lascas is not None
+        assert lascas.document.dropped_controls > 0
+        assert any("controle" in aviso for aviso in lascas.document.warnings)
+
     def test_texto_bruto_preservado(self) -> None:
         item = achados().by_key("EBOOK_RECHEIOS")
         assert item is not None

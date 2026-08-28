@@ -65,6 +65,28 @@ class PdfExtractionError(RuntimeError):
     """Falha ao ler o PDF. Nunca silenciosa."""
 
 
+#: Caracteres de controle que o PDF entrega e que nao sao conteudo.
+#:
+#: PostgreSQL recusa NUL (0x00) em campo `text` — "cannot contain NUL bytes".
+#: SQLite aceita em silencio, e foi por isso que a suite local passou e a
+#: primeira gravacao em producao falhou. O banco de verdade encontrou o que o
+#: banco de teste escondeu.
+#:
+#: Os 27 NUL do acervo (26 em Lascas, 1 no snapshot do site) sao artefato de
+#: extracao, nao texto: nenhum deles fica entre caracteres visiveis. Remove-los
+#: nao altera nenhum valor tecnico — e a remocao e contada e reportada.
+_CONTROL_KEEP = "\n\r\t"
+
+
+def _strip_control(texto: str) -> tuple[str, int]:
+    """Remove controles nao imprimiveis. Devolve (texto, quantos)."""
+
+    if not any(ord(c) < 32 and c not in _CONTROL_KEEP for c in texto):
+        return texto, 0
+    limpo = "".join(c for c in texto if ord(c) >= 32 or c in _CONTROL_KEEP)
+    return limpo, len(texto) - len(limpo)
+
+
 @dataclass(frozen=True)
 class PdfPage:
     page_number: int
@@ -76,6 +98,8 @@ class PdfPage:
     repaired_dashes: int = 0
     #: Quantos glifos nao mapeados foram removidos.
     dropped_glyphs: int = 0
+    #: Quantos caracteres de controle foram removidos.
+    dropped_controls: int = 0
 
     @property
     def is_empty(self) -> bool:
@@ -115,6 +139,10 @@ class PdfDocument:
     def repaired_dashes(self) -> int:
         return sum(page.repaired_dashes for page in self.pages)
 
+    @property
+    def dropped_controls(self) -> int:
+        return sum(page.dropped_controls for page in self.pages)
+
     def summary(self) -> dict[str, Any]:
         return {
             "arquivo": self.filename,
@@ -126,6 +154,7 @@ class PdfDocument:
             "paginas_sem_texto": self.empty_pages,
             "travessoes_restaurados": self.repaired_dashes,
             "glifos_removidos": sum(p.dropped_glyphs for p in self.pages),
+            "controles_removidos": self.dropped_controls,
             "links": sum(len(v) for v in self.links.values()),
             "avisos": self.warnings,
         }
@@ -146,8 +175,8 @@ def _open_document(path: Path) -> Any:
         raise PdfExtractionError(f"nao foi possivel abrir {path.name}: {type(erro).__name__}: {erro}") from erro
 
 
-def _repair_page(pagina: Any) -> tuple[str, str, int, int]:
-    """Devolve (bruto, reparado, travessoes, glifos_removidos).
+def _repair_page(pagina: Any) -> tuple[str, str, int, int, int]:
+    """Devolve (bruto, reparado, travessoes, glifos_removidos, controles).
 
     Reconstroi a pagina caractere a caractere para poder medir cada glifo. O
     texto bruto vem de `get_text()` para preservar exatamente o que o parser
@@ -181,12 +210,10 @@ def _repair_page(pagina: Any) -> tuple[str, str, int, int]:
     # Sem travessao para reparar, o texto do parser e melhor: preserva a
     # quebra de linha original, que a reconstrucao caractere a caractere nao
     # tem como recuperar com fidelidade.
-    if travessoes == 0:
-        texto, removidos = _drop_unmapped(bruto)
-        return bruto, texto, 0, removidos
-
-    texto, removidos = _drop_unmapped(reconstruido)
-    return bruto, texto, travessoes, removidos
+    escolhido = bruto if travessoes == 0 else reconstruido
+    texto, removidos = _drop_unmapped(escolhido)
+    texto, controles = _strip_control(texto)
+    return bruto, texto, travessoes, removidos, controles
 
 
 def _drop_unmapped(texto: str) -> tuple[str, int]:
@@ -246,7 +273,7 @@ def extract_pdf(path: str | Path) -> PdfDocument:
 
     for indice in range(documento_pdf.page_count):
         pagina = documento_pdf[indice]
-        bruto, texto, travessoes, glifos = _repair_page(pagina)
+        bruto, texto, travessoes, glifos, controles = _repair_page(pagina)
         resultado.pages.append(
             PdfPage(
                 page_number=indice + 1,
@@ -254,6 +281,7 @@ def extract_pdf(path: str | Path) -> PdfDocument:
                 text=texto,
                 repaired_dashes=travessoes,
                 dropped_glyphs=glifos,
+                dropped_controls=controles,
             )
         )
         destinos = _links_of(pagina)
@@ -264,6 +292,12 @@ def extract_pdf(path: str | Path) -> PdfDocument:
         resultado.warnings.append(
             f"paginas sem texto extraivel (provavelmente imagem): {resultado.empty_pages}. "
             "Exigem validacao visual antes de qualquer afirmacao sobre o conteudo delas."
+        )
+    if resultado.dropped_controls:
+        resultado.warnings.append(
+            f"{resultado.dropped_controls} caracteres de controle removidos (NUL e afins). "
+            "PostgreSQL recusa NUL em campo text; sao artefato de extracao, nao conteudo. "
+            "Texto bruto preservado."
         )
     if resultado.repaired_dashes:
         resultado.warnings.append(
