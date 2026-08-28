@@ -182,6 +182,21 @@ def apply_approvals(repository: Any, *, manifesto: tuple[Approval, ...] = APPROV
                 )
                 continue
 
+            # DRAFT -> CONFIRMED e proibido pela tabela de transicoes, e com
+            # razao: DRAFT significa "o documento se declara incompleto".
+            #
+            # PRODUCTS e OFFERS chegaram aqui em DRAFT por heranca: na F2 os
+            # caveats deles diziam "A VERIFICAR" e "a ser preenchida com
+            # Judith". A F2.7 reescreveu os dois e resolveu essas pendencias,
+            # mas `run_backfill` nao reavalia status de documento existente —
+            # e nao deve mesmo, porque reavaliar automaticamente poderia
+            # rebaixar um documento aprovado.
+            #
+            # Quando o manifesto aprova explicitamente, o salto intermediario e
+            # escrituracao: quem aprovou ja afirmou que leu e que esta pronto.
+            if str(documento["status"]) == "DRAFT":
+                repository.set_status(document_id=documento["document_id"], novo="TO_VALIDATE")
+
             repository.approve_version(
                 document_id=documento["document_id"],
                 version=int(versao["version"]),

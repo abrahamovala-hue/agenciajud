@@ -208,3 +208,51 @@ class TestTroasDoAgentePromovido:
             assert resposta["resultados"] == []
         finally:
             bootstrap.set_knowledge_repository(anterior)
+
+
+class TestStatusHerdado:
+    def test_draft_declarado_no_manifesto_sobe_ate_confirmed(self, store) -> None:
+        """PRODUCTS e OFFERS chegaram em DRAFT por heranca da F2.
+
+        DRAFT -> CONFIRMED e proibido pela tabela de transicoes. Quando o
+        manifesto aprova explicitamente, o salto por TO_VALIDATE e
+        escrituracao — nao promocao automatica.
+        """
+
+        from brain.repository import checksum_of
+
+        doc = store.create_document(
+            source_id="src",
+            title="OFFERS",
+            layer="L3",
+            status="DRAFT",
+            content_access="PUBLIC",
+            checksum=checksum_of("x\n"),
+            external_key="OFFERS",
+        )
+        store.add_version(document_id=doc, body="x\n", created_by="teste")
+
+        relatorio = apply_approvals(store)
+
+        assert relatorio["erros"] == []
+        assert store.get_document_by_external_key("OFFERS")["status"] == "CONFIRMED"
+
+    def test_draft_fora_do_manifesto_continua_draft(self, store) -> None:
+        """O salto so acontece para quem um humano aprovou por nome."""
+
+        from brain.repository import checksum_of
+
+        doc = store.create_document(
+            source_id="src",
+            title="OFFER_STRATEGY_INTERNAL",
+            layer="L3",
+            status="DRAFT",
+            content_access="INTERNAL_ONLY",
+            checksum=checksum_of("y\n"),
+            external_key="OFFER_STRATEGY_INTERNAL",
+        )
+        store.add_version(document_id=doc, body="y\n", created_by="teste")
+
+        apply_approvals(store)
+
+        assert store.get_document_by_external_key("OFFER_STRATEGY_INTERNAL")["status"] == "DRAFT"
