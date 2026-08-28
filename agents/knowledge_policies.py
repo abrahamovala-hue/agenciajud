@@ -741,7 +741,21 @@ def get_policy(agent_id: str) -> AgentKnowledgePolicy:
 
 
 def build_retriever_for(agent_id: str) -> Callable[..., list[dict[Any, Any] | str]]:
-    """Retriever que alimenta a tool nativa `search_knowledge_base` do Agno."""
+    """Retriever que alimenta a tool nativa `search_knowledge_base` do Agno.
+
+    F2.8: o agente promovido tem este retriever apontado para o Brain tambem.
+
+    Sem isso ele ficaria com DOIS caminhos de conhecimento — as tools do Brain
+    e este retriever no lexical congelado, que devolve nada. O modelo escolhe
+    um dos dois sem saber a diferenca, e metade das perguntas volta com
+    "nenhuma fonte consultada" mesmo com o conteudo disponivel. Foi exatamente
+    o que apareceu no primeiro teste em producao.
+    """
+
+    from brain.cutover import build_brain_retriever_for, is_brain_native
+
+    if is_brain_native(agent_id):
+        return build_brain_retriever_for(agent_id)
 
     policy = get_policy(agent_id)
     return build_knowledge_retriever(policy.documents, policy.missing_sources)

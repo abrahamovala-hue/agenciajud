@@ -85,6 +85,34 @@ def cutover_report() -> dict[str, Any]:
     }
 
 
+def build_brain_retriever_for(agent_id: str) -> Any:
+    """`search_knowledge_base` do Agno, servido pelo Brain.
+
+    Mesma assinatura que o Agno espera (`agno/agent/_default_tools.py`):
+    `(query, num_documents=None, **kwargs) -> list[dict|str]`.
+
+    Devolve lista vazia em falha em vez de levantar: o Agno chama isto dentro
+    do loop de tool, e uma excecao ali vira erro na conversa da cliente.
+    """
+
+    def retriever(query: str, num_documents: int | None = None, **_kwargs: Any) -> list[Any]:
+        from brain.bootstrap import get_knowledge_repository
+        from brain.retrieval import search
+
+        try:
+            resultado = search(
+                agent_id=agent_id,
+                query=query,
+                repository=get_knowledge_repository(),
+                limit=num_documents or 4,
+            )
+        except Exception:  # noqa: BLE001
+            return []
+        return list(resultado.as_documents())
+
+    return retriever
+
+
 def build_brain_tools_for(agent_id: str) -> list[Any]:
     """As mesmas duas tools, servidas pelo Brain.
 

@@ -256,3 +256,61 @@ class TestStatusHerdado:
         apply_approvals(store)
 
         assert store.get_document_by_external_key("OFFER_STRATEGY_INTERNAL")["status"] == "DRAFT"
+
+
+class TestUmCaminhoDeConhecimentoSo:
+    def test_agente_promovido_tem_retriever_do_brain(self, monkeypatch) -> None:
+        """Dois caminhos, um deles congelado, e pior que um caminho so.
+
+        Antes desta correcao o agente promovido ficava com as tools do Brain
+        E o `knowledge_retriever` no lexical congelado. O modelo escolhia um
+        dos dois sem saber a diferenca e metade das perguntas voltava com
+        "nenhuma fonte consultada" mesmo com o conteudo disponivel.
+        """
+
+        monkeypatch.setenv("BRAIN_NATIVE_AGENTS", "customer-support-agent")
+        from agents.knowledge_policies import build_retriever_for
+
+        retriever = build_retriever_for("customer-support-agent")
+        assert retriever.__module__ == "brain.cutover"
+
+    def test_agente_nao_promovido_mantem_retriever_lexical(self, monkeypatch) -> None:
+        monkeypatch.setenv("BRAIN_NATIVE_AGENTS", "customer-support-agent")
+        from agents.knowledge_policies import build_retriever_for
+
+        retriever = build_retriever_for("caption-writer")
+        assert retriever.__module__ == "agents.knowledge_sources"
+
+    def test_retriever_do_brain_nao_levanta_sem_banco(self, monkeypatch) -> None:
+        monkeypatch.setenv("BRAIN_NATIVE_AGENTS", "customer-support-agent")
+        from brain import bootstrap
+        from brain.cutover import build_brain_retriever_for
+
+        anterior = bootstrap._repository
+        bootstrap.set_knowledge_repository(object())
+        try:
+            assert build_brain_retriever_for("customer-support-agent")("qualquer") == []
+        finally:
+            bootstrap.set_knowledge_repository(anterior)
+
+
+class TestInstrucaoAcompanhaOCutover:
+    def test_suporte_nao_diz_mais_que_nao_tem_acesso(self) -> None:
+        """A instrucao virou mentira no momento em que o agente foi promovido."""
+
+        from agents.judith_team.customer_support_agent import instructions
+
+        assert "NAO tem o conteudo dos ebooks" not in instructions
+        assert "TEM acesso ao conteudo tecnico" in instructions
+
+    def test_suporte_sabe_que_consultar_nao_e_entregar(self) -> None:
+        from agents.judith_team.customer_support_agent import instructions
+
+        assert "Consultar nao e entregar" in instructions
+        assert "so os ingredientes" in instructions
+
+    def test_suporte_continua_proibido_de_inventar(self) -> None:
+        from agents.judith_team.customer_support_agent import instructions
+
+        assert "inventad" in instructions
+        assert "experiencia culinaria" in instructions
