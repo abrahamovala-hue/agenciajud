@@ -97,12 +97,14 @@ def build_brain_retriever_for(agent_id: str) -> Any:
 
     def retriever(query: str, num_documents: int | None = None, **_kwargs: Any) -> list[Any]:
         from brain.bootstrap import get_knowledge_repository
+        from brain.query_context import enrich
         from brain.retrieval import search
 
+        consulta, _ = enrich(query)
         try:
             resultado = search(
                 agent_id=agent_id,
-                query=query,
+                query=consulta,
                 repository=get_knowledge_repository(),
                 limit=num_documents or 4,
             )
@@ -172,10 +174,16 @@ def build_brain_tools_for(agent_id: str) -> list[Any]:
         }
 
     def buscar_conhecimento(pergunta: str) -> dict[str, Any]:
+        from brain.query_context import enrich
         from brain.retrieval import search
 
+        # J2: "entao so os ingredientes" nao tem termo proprio para casar com
+        # documento nenhum. Costura o turno anterior da cliente antes de
+        # buscar — so quando a pergunta e eliptica.
+        consulta, contextualizada = enrich(pergunta)
+
         try:
-            resultado = search(agent_id=agent_id, query=pergunta, repository=_repositorio(), limit=4)
+            resultado = search(agent_id=agent_id, query=consulta, repository=_repositorio(), limit=4)
         except Exception as erro:  # noqa: BLE001
             return {"status": "BRAIN_INDISPONIVEL", "detalhe": f"{type(erro).__name__}", "resultados": []}
 
@@ -183,9 +191,14 @@ def build_brain_tools_for(agent_id: str) -> list[Any]:
             return {
                 "status": "NENHUM_RESULTADO",
                 "resultados": [],
+                "contexto_adicionado": contextualizada,
                 "bloqueados_pela_politica": resultado.filtered_out,
             }
-        return {"status": "OK", "resultados": resultado.as_documents()}
+        return {
+            "status": "OK",
+            "contexto_adicionado": contextualizada,
+            "resultados": resultado.as_documents(),
+        }
 
     listar_fontes_disponiveis.__doc__ = (
         "Lista as fontes que voce pode consultar, com camada, status e quem aprovou, "

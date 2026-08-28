@@ -529,8 +529,16 @@ def test_shadow_nao_altera_nada(store, dev) -> None:
 #: `knowledge_policies` usa `brain.cutover`: e o mecanismo de troca de caminho
 #: da F2.8, e existe num LUGAR SO de proposito. Se um segundo modulo aparecer
 #: aqui, o cutover deixou de ter um ponto unico de reversao.
+#: `brain.query_context` entrou com o J2. Ele NAO e retrieval: nao busca, nao
+#: devolve conhecimento, nao consulta o banco. Guarda a ultima mensagem da
+#: cliente e costura contexto numa query eliptica. O workflow e o unico lugar
+#: que conhece a sessao, entao e o unico que pode marca-la.
 _IMPORTS_DE_BRAIN_PERMITIDOS: dict[str, tuple[str, ...]] = {
-    "orchestration/workflows/answer_dm.py": ("brain.disclosure_gate", "brain.access_policy"),
+    "orchestration/workflows/answer_dm.py": (
+        "brain.disclosure_gate",
+        "brain.access_policy",
+        "brain.query_context",
+    ),
     "agents/knowledge_policies.py": ("brain.cutover",),
 }
 

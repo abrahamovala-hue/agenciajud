@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import cast
 
 from agno.run.base import RunStatus
+from agno.utils.log import log_error
 from agno.workflow import Router, Step, Workflow
 from agno.workflow.types import StepInput, StepOutput
 
@@ -246,10 +247,20 @@ Preencha o restante do output_schema normalmente."""
             task_id=task_id,
             objective="Responder conversa social",
             context=f"Mensagem social, sem pergunta de negocio: {message!r}",
+            # J3: a versao anterior dizia "nao precisa consultar documento".
+            # Isso criava um silo por prompt: o agente tem OFFERS e PRODUCTS ao
+            # alcance e era instruido a responder de olhos fechados. Se a
+            # mensagem tinha uma pergunta factual embutida, ele nao consultava.
+            #
+            # A regra que fica e a que importa: nao afirmar sem fonte. Consultar
+            # para "oii" continua desnecessario, e a decisao segue sendo dele.
             message=(
                 f"Responda esta mensagem de forma breve, calorosa e natural, no tom da marca: {message!r}\n"
-                "E so conversa — nao afirme nada sobre preco, produto, oferta, prazo ou politica, "
-                "e nao precisa consultar documento. Se a pessoa quiser algo concreto, convide-a a perguntar."
+                "Se for so conversa (saudacao, agradecimento, emoji, 'entendi'), responda direto — "
+                "nao precisa consultar nada.\n"
+                "Se houver qualquer pergunta factual embutida (preco, produto, garantia, o que o ebook "
+                "ensina, diferenca entre produtos), CONSULTE antes de responder. Nunca afirme preco, "
+                "oferta, prazo, politica ou conteudo de produto sem ter aberto a fonte nesta execucao."
             ),
             log=log,
             **sessao,
@@ -391,6 +402,20 @@ def run_answer_dm(
     log.channel = channel
     log.session_id = session_id
     log.user_ref = user_id
+
+    # J2: marca a sessao para as tools do Brain e guarda esta mensagem como
+    # contexto do proximo turno. Duas linhas, e e o que faz "entao so os
+    # ingredientes" recuperar alguma coisa. Nunca derruba a execucao.
+    try:
+        from brain.query_context import remember, set_session
+
+        set_session(session_id)
+        remember(message, session_id=session_id)
+    except Exception as exc:  # noqa: BLE001
+        # Perder o contexto degrada o follow-up; nao pode derrubar a resposta.
+        # Mas tambem nao pode sumir em silencio: sem o log, o sintoma seria
+        # "o agente parou de entender follow-up" sem nenhuma pista do porque.
+        log_error(f"contexto de conversa indisponivel para {log.task_id}: {type(exc).__name__}: {exc}")
 
     try:
         workflow = _build_workflow(log, log.task_id, message, session_id=session_id, user_id=user_id)

@@ -52,6 +52,121 @@ DEFAULT_LIMIT = 4
 #: top-k final, senao nao ha o que diversificar.
 CANDIDATE_POOL_FACTOR = 5
 
+# --- J1: a canonicalizacao precisa influenciar o retrieval ------------------
+#
+# O scorer lexical conta repeticao de palavra. Ele nao sabe QUE TIPO de
+# pergunta esta respondendo, e por isso nao sabe qual fonte e canonica para
+# ela. Medido na auditoria:
+#
+#     "quanto custa Casquinhas e Recheios?"
+#       PRODUCTS  score 12   (repete o nome dos produtos)
+#       OFFERS    score  4   posicao 15 de 27  <- a fonte do preco, fora do top-k
+#
+# "quanto" e "custa" pontuam ZERO: nao aparecem em documento nenhum. E a F2.7
+# piorou isso — ao tirar o preco de PRODUCTS, transformou o vencedor da corrida
+# lexical num documento que estruturalmente nao responde a pergunta.
+#
+# A correcao usa o que ja existe: `topics`. OFFERS ja carrega `preco`, os
+# ebooks ja carregam `tecnica`. Falta so ligar a intencao da pergunta ao topic
+# da fonte.
+
+#: Quanto vale um topic que casa com a intencao.
+#:
+#: 5 e calibrado contra a escala que ja existe: termo no cabecalho vale +4,
+#: termo na chave vale +3. Se a pergunta e sobre preco e o documento E o
+#: documento de preco, esse sinal vale pelo menos tanto quanto a palavra
+#: aparecer num cabecalho. Mais que isso faria OFFERS ganhar de fontes que
+#: mencionam o termo de verdade.
+TOPIC_BOOST = 5
+
+#: intencao -> topics canonicos. Deterministico, sem LLM.
+#:
+#: Deliberadamente pequeno. Nao e um classificador de intencao: e um mapa de
+#: sinonimos comerciais para os topics que a taxonomia ja atribui.
+#:
+#: A ORDEM E SIGNIFICATIVA — vence a primeira regra que casar, e nao a uniao.
+#:
+#: Motivo, medido: "quanto custa Casquinhas e Recheios?" disparava a intencao
+#: de PRECO **e** a TECNICA ao mesmo tempo, porque "casquinha" e "recheio" sao
+#: nome de produto e palavra tecnica ao mesmo tempo. A uniao dos topics
+#: impulsionava as fichas de produto (`ebook`) junto com OFFERS, e as fichas
+#: afogavam OFFERS por serem varias.
+#:
+#: Preco e garantia vem primeiro porque sao os sinais MAIS ESPECIFICOS: quem
+#: escreve "quanto custa" esta perguntando preco, mesmo citando o nome de um
+#: produto que tambem e uma tecnica.
+_INTENT_TOPICS: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
+    (
+        (
+            "quanto custa",
+            "quanto e",
+            "quanto sai",
+            "quanto fica",
+            "qual valor",
+            "qual o valor",
+            "preco",
+            "valor do",
+            "caro",
+            "barato",
+            "promocao",
+            "desconto",
+            "quanto voce cobra",
+            "quanto custam",
+        ),
+        # `comercial` fica DE FORA de proposito. PRODUCTS tambem o carrega, e
+        # incluir esse topic dava o mesmo boost ao documento que ja vencia a
+        # corrida lexical — amplificava o problema em vez de corrigi-lo.
+        # `preco` e exclusivo de OFFERS; `oferta` alcanca OFFERS e o site.
+        frozenset({"preco", "oferta"}),
+    ),
+    (
+        ("garantia", "reembolso", "devolucao", "devolver", "cancelar", "arrependimento", "estorno"),
+        frozenset({"politica", "oferta"}),
+    ),
+    (
+        (
+            "receita",
+            "ganache",
+            "temperagem",
+            "temperar",
+            "casquinha",
+            "cristaliza",
+            "emulsific",
+            "gianduia",
+            "brigadeiro",
+            "recheio",
+            "bombom",
+            "ingrediente",
+            "gramagem",
+            "derreter",
+            "molde",
+            "separou",
+            "brilho",
+        ),
+        frozenset({"tecnica", "chocolate", "ebook"}),
+    ),
+    (
+        ("qual ebook", "quais ebooks", "diferenca entre", "o que ensina", "quantas receitas", "qual deles"),
+        frozenset({"produto", "ebook"}),
+    ),
+)
+
+
+def detect_intent_topics(query: str) -> frozenset[str]:
+    """Topics canonicos para a intencao da pergunta. Vazio = sem boost.
+
+    Primeira regra que casa vence — ver a nota de ordem em `_INTENT_TOPICS`.
+    Sem intencao detectada o comportamento e exatamente o de antes: score
+    puramente lexical. O boost adiciona, nunca substitui.
+    """
+
+    baixo = _normalize(query or "")
+    for marcas, topics in _INTENT_TOPICS:
+        if any(marca in baixo for marca in marcas):
+            return topics
+    return frozenset()
+
+
 #: Teto de chunks do MESMO documento no resultado final.
 #:
 #: A F2.5 media isso: um documento longo ocupava o top-k inteiro e expulsava a
@@ -256,6 +371,7 @@ def search(
 
     politica = access or resolve_access(agent_id)
     termos = _tokenize(query)
+    intent_topics = detect_intent_topics(query)
     bloqueados: dict[str, int] = {}
 
     candidatos = repository.chunks_for_search(statuses=politica.statuses, layers=politica.layers)
@@ -274,6 +390,11 @@ def search(
             continue
 
         score = _pontuar(termos, linha)
+        # J1: o boost soma ao score lexical, e SO depois dos filtros de
+        # acesso, status, whitelist e topic. Um documento proibido nao chega
+        # aqui — o boost nunca abre porta, so reordena o que ja passou.
+        if intent_topics and score >= 0 and set(linha.get("topics") or ()) & intent_topics:
+            score += TOPIC_BOOST
         if score > 0:
             pontuados.append((score, linha))
 
