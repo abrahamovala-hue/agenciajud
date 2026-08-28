@@ -25,9 +25,32 @@ Origem: auditoria de copy de 07/08/2026. Status de todas: **PROPOSTA**.
 | 1 | Oferta de combo/coleção com desconto adicional | `PROPOSTA` | Não existe. Ver `OFFERS.md` → `bundle: UNAVAILABLE`. |
 | 2 | Countdown timer para urgência | `PROPOSTA` | **Nunca existiu no site.** Não é campanha ativa. |
 | 3 | Depoimentos reais de alunos | `PROPOSTA` | Não há depoimento identificado publicado. |
-| 4 | Order bump / upsell no checkout | `PROPOSTA` | **Não existe no checkout.** |
+| 4 | Order bump / upsell no checkout | ✅ `JÁ IMPLEMENTADO` | Ver correção abaixo. |
 | 5 | Preço psicológico | `DEPRECATED` | Ver abaixo. |
 | 6 | Número de alunos como prova social | `PROPOSTA` | Não há número apurado. Afirmar seria inventar prova. |
+
+---
+
+## Correção do item 4 — o order bump JÁ EXISTE (2026-08-28)
+
+A versão anterior deste documento afirmava *"Não existe no checkout"*. **Estava errado.**
+
+O erro foi de método, e vale registrar: eu verifiquei as páginas do site e concluí a
+partir delas. O order bump não vive no site — vive **dentro do checkout**, que é outra
+superfície. Não tinha olhado lá.
+
+Abrindo `pay.kiwify.com.br/8GRurLG` em BRL:
+
+| Order bump ofertado | Preço exibido |
+|---|---|
+| Recheios Profissionais | 3x de R$ 13,20 |
+| Casquinhas Profissionais | 3x de R$ 10,35 |
+
+Ou seja: a Judith **já faz** cross-sell no checkout. A "proposta" era descrição de algo
+implementado. Registrado em `OFFERS.md` como fato comercial.
+
+**Lição para as próximas verificações:** o site não é a única superfície comercial. O
+checkout é o que a cliente vê com o cartão na mão, e ele tem conteúdo próprio.
 
 ---
 
@@ -66,8 +89,9 @@ destes itens é preço:
 
 ## Achados técnicos abertos (2026-08-27)
 
-1. **`schema.org` de O Segredo do Chocolate publica `25.00`** enquanto a página
-   mostra R$ 47,00. Afeta o rich snippet do Google. → `OFFERS.md`, conflito aberto.
+1. **`schema.org` de O Segredo do Chocolate publica `25.00`** enquanto a página e o
+   checkout mostram R$ 47,00. Resolvido como conhecimento (o checkout decidiu), mas
+   **continua sendo bug do site**: afeta o rich snippet do Google.
 2. **Descrição `schema.org` de O Segredo do Chocolate está errada:** "Sem
    conservantes, nutritivo, saudável e vegano" — não corresponde ao produto.
 3. **O PDF do site foi gerado de `localhost:8080`**, não do domínio publicado. O

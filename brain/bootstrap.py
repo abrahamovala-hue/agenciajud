@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_error, log_info, log_warning
 
 _repository: Any = None
 
@@ -66,6 +66,39 @@ def ensure_knowledge_store(db: Any) -> None:
 
         relatorio = run_backfill(repositorio)
         resumo = relatorio.summary()
+
+        # F2.8: aplica o manifesto de aprovacoes ANTES de reportar o estado,
+        # para que o log diga o estado ja aprovado. Nao levanta: documento que
+        # nao aprovou continua TO_VALIDATE, e TO_VALIDATE nao sai em producao.
+        from brain.approvals import apply_approvals, audit_drift
+        from brain.cutover import cutover_report
+
+        aprovacoes = apply_approvals(repositorio)
+        log_info(
+            f"aprovacoes: {len(aprovacoes['aprovadas'])} aplicadas, "
+            f"{len(aprovacoes['ignoradas'])} ignoradas, {len(aprovacoes['erros'])} erros"
+        )
+        for erro_aprovacao in aprovacoes["erros"]:
+            log_error(f"aprovacao falhou: {erro_aprovacao}")
+
+        # Conteudo que mudou DEPOIS de aprovado. E o unico caminho por onde
+        # texto nao lido por um humano sairia em producao — precisa gritar.
+        deriva = audit_drift(repositorio)
+        if deriva:
+            log_error(
+                f"APROVACAO DESATUALIZADA em {len(deriva)} documento(s): "
+                f"{[d['fonte'] for d in deriva]} estao CONFIRMED mas a versao vigente nunca foi aprovada."
+            )
+        else:
+            log_info("aprovacoes conferem com o conteudo vigente (sem deriva)")
+
+        corte = cutover_report()
+        log_info(f"brain cutover: {corte['total']} agentes nativos {corte['brain_native']} (origem={corte['origem']})")
+        if corte["pulados_na_ordem_recomendada"]:
+            log_warning(
+                f"cutover fora da ordem recomendada: {corte['pulados_na_ordem_recomendada']} "
+                "foram pulados. Nao e erro, mas foi intencional?"
+            )
         log_info(
             f"judith brain: {resumo['documentos']} documentos, {resumo['chunks']} chunks, "
             f"status={resumo['por_status']}, camadas={resumo['por_camada']}, "

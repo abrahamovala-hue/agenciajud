@@ -520,22 +520,31 @@ def test_shadow_nao_altera_nada(store, dev) -> None:
 # --- F. Nenhum agente foi plugado no Brain ----------------------------------
 
 
-#: O Disclosure Gate e a UNICA parte do Brain que a orquestracao pode usar
-#: antes do cutover. Ele nao e retrieval: nao busca, nao devolve conhecimento,
-#: nao muda o que o agente sabe. Ele so inspeciona o texto ja escrito antes de
-#: sair. Bloquear vazamento de conteudo pago nao pode esperar o cutover.
+#: Os UNICOS pontos onde codigo de agente/orquestracao pode tocar o Brain, e
+#: por qual porta.
+#:
+#: `answer_dm` usa o Disclosure Gate: nao e retrieval, nao busca, nao muda o
+#: que o agente sabe — so inspeciona o texto ja escrito antes de sair.
+#:
+#: `knowledge_policies` usa `brain.cutover`: e o mecanismo de troca de caminho
+#: da F2.8, e existe num LUGAR SO de proposito. Se um segundo modulo aparecer
+#: aqui, o cutover deixou de ter um ponto unico de reversao.
 _IMPORTS_DE_BRAIN_PERMITIDOS: dict[str, tuple[str, ...]] = {
-    "orchestration\\workflows\\answer_dm.py": ("brain.disclosure_gate", "brain.access_policy"),
     "orchestration/workflows/answer_dm.py": ("brain.disclosure_gate", "brain.access_policy"),
+    "agents/knowledge_policies.py": ("brain.cutover",),
 }
 
 
-def test_nenhum_agente_usa_retrieval_do_brain() -> None:
-    """O cutover de RETRIEVAL nao acontece na F2.5 nem na F2.7, e isto garante.
+def test_brain_e_alcancado_por_uma_porta_so() -> None:
+    """Nenhum agente monta retrieval por conta propria.
 
-    A lista de excecoes e nominal e minima: um modulo so, e so para o gate de
-    saida. Qualquer import de `brain.retrieval`, `brain.repository` ou
-    `brain.backfill` em agente ou workflow e cutover disfarcado.
+    Ate a F2.7 nenhum modulo de agente podia importar Brain. A F2.8 abriu UMA
+    porta — `brain.cutover`, em `knowledge_policies` — e este teste passou a
+    guardar essa porta em vez de proibir a casa inteira.
+
+    Importar `brain.retrieval`, `brain.repository`, `brain.backfill` ou
+    `brain.ingestion` direto continua proibido em qualquer lugar: seria
+    cutover sem o interruptor que o reverte.
     """
 
     import re
@@ -549,12 +558,31 @@ def test_nenhum_agente_usa_retrieval_do_brain() -> None:
         modulos = set(re.findall(r"(?:from|import)\s+(brain(?:\.[\w.]+)?)", texto))
         if not modulos:
             continue
-        permitidos = set(_IMPORTS_DE_BRAIN_PERMITIDOS.get(str(arquivo), ()))
+        chave = arquivo.as_posix()
+        permitidos = set(_IMPORTS_DE_BRAIN_PERMITIDOS.get(chave, ()))
         nao_autorizados = modulos - permitidos
         if nao_autorizados or any(p in modulos for p in proibidos):
-            ofensores.append(f"{arquivo}: {sorted(modulos)}")
+            ofensores.append(f"{chave}: {sorted(nao_autorizados or modulos)}")
 
     assert ofensores == [], f"dependencia nao autorizada do Brain: {ofensores}"
+
+
+def test_cutover_tem_um_interruptor_so() -> None:
+    """Reverter precisa ser apagar um nome, nao caçar imports."""
+
+    from brain.cutover import ENV_VAR, brain_native_agents
+
+    assert ENV_VAR == "BRAIN_NATIVE_AGENTS"
+    assert len(_IMPORTS_DE_BRAIN_PERMITIDOS) == 2, "surgiu um segundo ponto de entrada no Brain"
+    # Sem a variavel declarada, ninguem e nativo — o default nunca promove.
+    import os
+
+    anterior = os.environ.pop(ENV_VAR, None)
+    try:
+        assert brain_native_agents() == frozenset()
+    finally:
+        if anterior is not None:
+            os.environ[ENV_VAR] = anterior
 
 
 def test_retriever_de_producao_continua_o_lexical(dev) -> None:

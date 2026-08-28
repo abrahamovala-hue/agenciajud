@@ -105,8 +105,9 @@ _CATALOG: tuple[DocumentSource, ...] = (
         relative_path="JUDITH-AI-TEAM/brand/OFFERS.md",
         summary="Unica fonte de preco, desconto, checkout, garantia e status de oferta.",
         caveat=(
-            "O preco de O Segredo do Chocolate tem conflito aberto entre o texto do site (R$ 47) "
-            "e o schema.org (25.00). Usar R$ 47 e nao afirmar como definitivo."
+            "Precos verificados no checkout da Kiwify em 2026-08-28. O schema.org do site "
+            "publica 25.00 para O Segredo do Chocolate — isso e bug do site, nao o preco: "
+            "o checkout cobra R$ 47,00."
         ),
     ),
     DocumentSource(
@@ -752,6 +753,13 @@ def build_knowledge_tools_for(agent_id: str) -> list[Any]:
     Sao closures sobre a politica: o agente nao consegue pedir um documento
     que nao esta na lista dele, porque `read_document` so conhece a lista.
     """
+
+    # F2.8: agente promovido le do Brain. A troca acontece aqui, num ponto so,
+    # e e revertida apagando o nome de BRAIN_NATIVE_AGENTS. Ver brain/cutover.py.
+    from brain.cutover import build_brain_tools_for, is_brain_native
+
+    if is_brain_native(agent_id):
+        return build_brain_tools_for(agent_id)
 
     policy = get_policy(agent_id)
     chaves = ", ".join(source.key for source in policy.documents)

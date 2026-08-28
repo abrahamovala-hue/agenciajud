@@ -32,22 +32,41 @@
 
 ---
 
-## ⚠️ CONFLITO ABERTO — preço de O Segredo do Chocolate
+## ✅ RESOLVIDO — preço de O Segredo do Chocolate
 
-O site ao vivo se contradiz internamente:
+O site publicava dois valores para o mesmo produto: **R$ 47,00** no texto visível e
+**25.00** no `schema.org`. Resolvido em 2026-08-28 pela fonte comercial definitiva —
+**o próprio checkout da Kiwify**, consultado em BRL:
 
-| Onde | Valor |
+```
+O Segredo do Chocolate ......... R$ 47,00
+                                 (ou 2x de R$ 24,74 / 3x de R$ 16,77,
+                                  parcelamento com acréscimo)
+```
+
+**R$ 47,00 é o preço.** O bloco `schema.org` do site está errado.
+
+> 🐛 **Bug do site, não do conhecimento.** O mesmo bloco `schema.org` também carrega
+> uma descrição que não corresponde ao produto ("sem conservantes, nutritivo, saudável
+> e vegano"). Preço e descrição errados no mesmo bloco indicam sobra de outro produto.
+> Afeta o rich snippet do Google, não a resposta do agente. Ver `OFFER_STRATEGY_INTERNAL.md`.
+
+---
+
+## Order bump no checkout — EXISTE
+
+Ao comprar *O Segredo do Chocolate*, o checkout oferece os outros dois ebooks:
+
+| Order bump | Preço no checkout |
 |---|---|
-| Texto visível (home e `/lascas-premium`) | **R$ 47,00** |
-| `schema.org` → `Product.offers.price` | **25.00** |
+| Recheios Profissionais | 3x de R$ 13,20 |
+| Casquinhas Profissionais | 3x de R$ 10,35 |
 
-Os outros dois produtos batem entre texto e schema (37,00 e 29,00). Só este diverge,
-e diverge nas duas páginas — não é falha de renderização.
+Verificado no checkout `8GRurLG` em 2026-08-28.
 
-Isso tem efeito fora do agente: `schema.org` é o que o Google lê para rich snippets.
-
-**Enquanto não resolvido:** usar **R$ 47,00** (texto visível é o que a cliente vê) e
-**não** afirmar o valor como definitivo se questionada. `NEEDS_JUDITH`.
+> Estes são valores **parcelados com acréscimo**, exibidos dentro do checkout. Não são
+> o preço à vista dos produtos individuais (R$ 37,00 e R$ 29,00 — ver tabela acima), e
+> o agente não deve apresentá-los como se fossem.
 
 ---
 
