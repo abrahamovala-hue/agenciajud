@@ -24,6 +24,7 @@ from app.brain_admin import (
     ENV_FLAG,
     ROUTE_EMBEDDINGS,
     ROUTE_EVAL,
+    ROUTE_EXECUTIONS,
     ROUTE_STATUS,
     install_brain_admin,
     is_enabled,
@@ -219,3 +220,77 @@ class TestEval:
         antes = store.counts()
         _cliente(base).post(ROUTE_EVAL, json={"mode": "compare"}, headers=AUTORIZADO)
         assert store.counts() == antes
+
+
+class TestExecutions:
+    """A rota que fecha o laco: o hibrido rodou mesmo num atendimento real?"""
+
+    @pytest.fixture
+    def com_execucao(self, store, tmp_path):
+        # A fixture global aponta o ExecutionLog para `sqlite://` em memoria,
+        # que pertence a thread que a criou — e o TestClient atende em outra.
+        # Arquivo, como no `store`.
+        from sqlalchemy import create_engine
+
+        from orchestration.execution_log import ExecutionLog
+        from orchestration.execution_repository import (
+            ExecutionRepository,
+            persist_execution,
+            set_execution_repository,
+        )
+
+        engine = create_engine(
+            f"sqlite:///{tmp_path / 'exec.sqlite'}", connect_args={"check_same_thread": False}
+        )
+        repositorio = ExecutionRepository(engine)
+        repositorio.ensure_table()
+        set_execution_repository(repositorio)
+
+        log = ExecutionLog(workflow="ANSWER_DM", channel="whatsapp")
+        log.session_id = "wa:ANSWER_DM:wa_teste"
+        log.user_ref = "wa_teste"
+        log.inputs["message"] = "quanto custa o ebook de pistache com receita completa?"
+        log.result = "Resposta da cliente que NAO pode aparecer na rota."
+        log.outputs.update(
+            {
+                "evidence_status": "PASS",
+                "outbound_allowed": True,
+                "sources_opened": ["OFFERS"],
+                "retrieval_mode": ["HYBRID"],
+                "rag_mode": "hybrid",
+                "vector_candidates": 7,
+                "outbound_message": "texto que tambem nao pode sair",
+            }
+        )
+        log.finish(status="completed")
+        persist_execution(log)
+        yield store
+        engine.dispose()
+
+    def test_exige_bearer(self, ligado, store) -> None:
+        base, _ = _app()
+        assert _cliente(base).get(ROUTE_EXECUTIONS).status_code in (401, 403)
+
+    def test_devolve_a_telemetria(self, ligado, com_execucao) -> None:
+        base, _ = _app()
+        corpo = _cliente(base).get(ROUTE_EXECUTIONS, headers=AUTORIZADO).json()
+
+        assert corpo["total_registrado"] >= 1
+        primeira = corpo["execucoes"][0]
+        assert primeira["workflow"] == "ANSWER_DM"
+        assert primeira["telemetria"]["rag_mode"] == "hybrid"
+        assert primeira["telemetria"]["retrieval_mode"] == ["HYBRID"]
+
+    def test_nao_devolve_conversa(self, ligado, com_execucao) -> None:
+        """O teste que impede a rota de diagnostico de virar vazamento."""
+
+        base, _ = _app()
+        texto = _cliente(base).get(ROUTE_EXECUTIONS, headers=AUTORIZADO).text.lower()
+
+        for proibido in ("pistache", "resposta da cliente", "outbound_message", "receita completa", "inputs"):
+            assert proibido not in texto, proibido
+
+    def test_limite_tem_teto(self, ligado, com_execucao) -> None:
+        base, _ = _app()
+        corpo = _cliente(base).get(f"{ROUTE_EXECUTIONS}?limit=9999", headers=AUTORIZADO).json()
+        assert len(corpo["execucoes"]) <= 25

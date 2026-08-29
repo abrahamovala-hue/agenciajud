@@ -52,6 +52,7 @@ ENV_FLAG = "BRAIN_ADMIN_ENABLED"
 ROUTE_STATUS = "/admin/brain/status"
 ROUTE_EMBEDDINGS = "/admin/brain/embeddings"
 ROUTE_EVAL = "/admin/brain/eval"
+ROUTE_EXECUTIONS = "/admin/brain/executions"
 
 
 def is_enabled() -> bool:
@@ -82,6 +83,51 @@ class EvalRequest(BaseModel):
     vector_floor: float | None = Field(default=None, ge=0.0, le=1.0)
     lexical_weight: float | None = Field(default=None, ge=0.0, le=10.0)
     vector_weight: float | None = Field(default=None, ge=0.0, le=10.0)
+
+
+#: Colunas do ExecutionLog que a rota pode devolver.
+#:
+#: Espelha `_OUTCOME_ALLOWLIST` na intencao: enumeraveis, contagens e nomes de
+#: fonte. `inputs`, `result`, `human_feedback` e `outbound_message` NAO estao
+#: aqui — sao corpo de conversa, e uma rota de diagnostico que devolve conversa
+#: e um vazamento com dashboard.
+_COLUNAS_DE_EXECUCAO = (
+    "task_id",
+    "workflow",
+    "status",
+    "channel",
+    "final_agent",
+    "evidence_status",
+    "outbound_allowed",
+    "escalated",
+    "agents_called",
+    "duration_ms",
+    "started_at",
+)
+
+#: Do `outcome` (JSON), so a telemetria. `references` e `sources_opened` sao
+#: chave de documento, a mesma classe que ja e persistida.
+_CAMPOS_DE_OUTCOME = (
+    "evidence_status",
+    "evidence_reason",
+    "outbound_allowed",
+    "sources_opened",
+    "references",
+    "brain_tools_called",
+    "context_added",
+    "disclosure_status",
+    "retrieval_mode",
+    "rag_mode",
+    "embedding_model",
+    "retrieval_calls",
+    "lexical_candidates",
+    "vector_candidates",
+    "final_candidates",
+    "document_diversity",
+    "shadow_sources",
+    "retrieval_latency_ms",
+    "vector_skip_reason",
+)
 
 
 def _diagnostico_do_banco(engine: Any) -> dict[str, Any]:
@@ -277,5 +323,44 @@ def install_brain_admin(base_app: FastAPI, settings: Any) -> bool:
         if payload.detalhado:
             corpo["casos"] = [c.as_dict() for c in casos]
         return corpo
+
+    @base_app.get(
+        ROUTE_EXECUTIONS,
+        tags=["Admin"],
+        operation_id="brain_executions",
+        dependencies=[Depends(auth)],
+    )
+    async def executions(limit: int = 5) -> dict[str, Any]:
+        """As ultimas execucoes, SO a telemetria.
+
+        Fecha o laco da verificacao de producao: sem isto, "o hibrido rodou de
+        verdade num atendimento?" so seria respondivel por inferencia — que foi
+        exatamente o buraco do MOBILE_FAIL_02.
+
+        Nenhum campo de conversa sai daqui. Nem a mensagem da cliente, nem a
+        resposta, nem o telefone: `user_ref` ja e um hash e nem ele e exposto.
+        """
+
+        from orchestration.execution_repository import get_execution_repository
+
+        repositorio = get_execution_repository()
+        if repositorio is None:
+            raise HTTPException(status_code=503, detail="execution log indisponivel")
+
+        linhas = repositorio.list_executions(limit=max(1, min(limit, 25)))
+        return {
+            "total_registrado": repositorio.count(),
+            "execucoes": [
+                {
+                    **{c: linha.get(c) for c in _COLUNAS_DE_EXECUCAO},
+                    "telemetria": {
+                        c: (linha.get("outcome") or {}).get(c)
+                        for c in _CAMPOS_DE_OUTCOME
+                        if c in (linha.get("outcome") or {})
+                    },
+                }
+                for linha in linhas
+            ],
+        }
 
     return True

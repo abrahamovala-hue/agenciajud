@@ -109,10 +109,15 @@ def ensure_knowledge_store(db: Any) -> None:
         try:
             from brain.embeddings import DEFAULT_MODEL
 
-            indexaveis = len(repositorio.chunks_for_embedding())
-            cobertos = len(repositorio.embedded_checksums(embedding_model=DEFAULT_MODEL))
+            linhas = repositorio.chunks_for_embedding()
+            # Comparar CHECKSUMS com CHECKSUMS. Texto repetido em dois chunks
+            # compartilha um vetor so, entao contar vetores contra chunks fazia
+            # cobertura completa aparecer como 703/709 e parecer buraco.
+            necessarios = {str(linha["checksum"]) for linha in linhas}
+            cobertos = repositorio.embedded_checksums(embedding_model=DEFAULT_MODEL) & necessarios
             log_info(
-                f"indice semantico: {cobertos}/{indexaveis} chunks indexados com {DEFAULT_MODEL}"
+                f"indice semantico: {len(cobertos)}/{len(necessarios)} textos distintos "
+                f"({len(linhas)} chunks) indexados com {DEFAULT_MODEL}"
             )
             if modo["consulta_vetor"] and not cobertos:
                 log_error(
