@@ -35,6 +35,7 @@ pela Judith ainda.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -43,6 +44,7 @@ from typing import Any
 # inutil — as diferencas viriam do tokenizador, nao da arquitetura.
 from agents.knowledge_sources import _normalize, _tokenize
 from brain.access_policy import AccessDenied, KnowledgeAccess, resolve_access
+from brain.fusion import reciprocal_rank_fusion
 from brain.models import DisclosurePolicy, decide_disclosure
 from brain.security import as_data_envelope
 
@@ -253,6 +255,9 @@ class SearchHit:
     body: str
     #: Sinais do scanner de injecao, se houver. O corpo continua original.
     flags: list[dict[str, Any]] = field(default_factory=list)
+    #: F3: por que este trecho ficou onde ficou. `None` no modo lexical puro.
+    #: Nao vai para o payload do agente — e diagnostico, nao conhecimento.
+    ranking: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -275,8 +280,45 @@ class SearchResult:
     #: virar um canal lateral para o conteudo.
     filtered_out: dict[str, int]
 
+    # --- F3: observabilidade do retrieval ---------------------------------
+    #: LEXICAL | HYBRID | HYBRID_SHADOW. O que de fato ACONTECEU nesta busca,
+    #: que nem sempre e o que `RAG_MODE` pediu: sem indice, ou com o provedor
+    #: de embedding fora do ar, o hibrido degrada para lexical e diz isso.
+    retrieval_mode: str = "LEXICAL"
+    #: O modo pedido. A diferenca entre os dois campos e o diagnostico.
+    rag_mode: str = "current"
+    lexical_candidates: int = 0
+    vector_candidates: int = 0
+    final_candidates: int = 0
+    eligible_chunks: int = 0
+    embedding_model: str | None = None
+    #: Por que a perna vetorial nao rodou, quando nao rodou.
+    vector_skip_reason: str | None = None
+    #: Modo shadow: o top-k que o hibrido TERIA devolvido. Nao afeta `hits`.
+    shadow_keys: list[str] = field(default_factory=list)
+    latency_ms: int | None = None
+
     def as_documents(self) -> list[dict[str, Any]]:
         return [hit.as_dict() for hit in self.hits]
+
+    def observability(self) -> dict[str, Any]:
+        """O que vai para log. IDs e contagem — nunca corpo, nunca vetor."""
+
+        return {
+            "retrieval_mode": self.retrieval_mode,
+            "rag_mode": self.rag_mode,
+            "lexical_candidates": self.lexical_candidates,
+            "vector_candidates": self.vector_candidates,
+            "final_candidates": self.final_candidates,
+            "eligible_chunks": self.eligible_chunks,
+            "embedding_model": self.embedding_model,
+            "vector_skip_reason": self.vector_skip_reason,
+            "sources": [h.provenance.external_key or h.provenance.document_id for h in self.hits],
+            "documentos_distintos": len({h.provenance.document_id for h in self.hits}),
+            "shadow_sources": list(self.shadow_keys),
+            "latency_ms": self.latency_ms,
+            "ranking": [h.ranking for h in self.hits if h.ranking],
+        }
 
 
 def _texto_para_score(hit: dict[str, Any]) -> str:
@@ -354,29 +396,50 @@ def _diversify(pontuados: list[tuple[int, dict[str, Any]]], *, limit: int) -> li
     return escolhidos
 
 
-def search(
-    *,
-    agent_id: str,
-    query: str,
-    repository: Any,
-    limit: int = DEFAULT_LIMIT,
-    include_body: bool = True,
-    access: KnowledgeAccess | None = None,
-) -> SearchResult:
-    """Busca no Brain respeitando a politica de acesso.
+#: Cache de vetor de consulta, no processo. Pergunta repetida nao repaga.
+#:
+#: "quanto custa?" e "tem desconto?" chegam o dia inteiro. O cache e pequeno e
+#: local ao processo de proposito: nao ha invalidacao a fazer (o vetor de uma
+#: string com um modelo fixo nunca muda) e nao vale um Redis para isto.
+_CACHE_DE_CONSULTA: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
+_CACHE_MAXIMO = 256
 
-    Levanta `AccessDenied` para agente desconhecido — fail-closed, e o erro
-    e explicito em vez de uma lista vazia que parece "nao achei nada".
+
+def _vetor_da_consulta(query: str, embedder: Any) -> list[float]:
+    chave = (str(embedder.model), query)
+    if chave in _CACHE_DE_CONSULTA:
+        _CACHE_DE_CONSULTA.move_to_end(chave)
+        return _CACHE_DE_CONSULTA[chave]
+
+    vetor = embedder.embed([query])[0]
+    _CACHE_DE_CONSULTA[chave] = vetor
+    if len(_CACHE_DE_CONSULTA) > _CACHE_MAXIMO:
+        _CACHE_DE_CONSULTA.popitem(last=False)
+    return vetor
+
+
+def clear_query_cache() -> None:
+    """Usado pelos testes que trocam de embedder no meio do caminho."""
+
+    _CACHE_DE_CONSULTA.clear()
+
+
+def _elegiveis(
+    politica: KnowledgeAccess, candidatos: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """O filtro de politica. UMA passada, para as duas pernas.
+
+    Isto e o coracao da seguranca da F3, e por isso e uma funcao so: as duas
+    pernas recebem EXATAMENTE o mesmo conjunto. Nao existe caminho por onde a
+    busca vetorial alcance um chunk que a lexical nao alcanca — nao porque ha
+    uma checagem extra depois, mas porque o conjunto e o mesmo objeto.
+
+    Similaridade nunca vira permissao: um chunk pago fora da whitelist do
+    agente nem entra na lista sobre a qual o cosseno e calculado.
     """
 
-    politica = access or resolve_access(agent_id)
-    termos = _tokenize(query)
-    intent_topics = detect_intent_topics(query)
     bloqueados: dict[str, int] = {}
-
-    candidatos = repository.chunks_for_search(statuses=politica.statuses, layers=politica.layers)
-
-    pontuados: list[tuple[int, dict[str, Any]]] = []
+    passaram: list[dict[str, Any]] = []
     for linha in candidatos:
         if not politica.allows_document(
             external_key=linha.get("external_key"),
@@ -388,21 +451,177 @@ def search(
         if not politica.allows_topic(linha.get("topics")):
             bloqueados["topic_nao_permitido"] = bloqueados.get("topic_nao_permitido", 0) + 1
             continue
+        passaram.append(linha)
+    return passaram, bloqueados
 
+
+def _perna_lexical(
+    termos: list[str], intent_topics: frozenset[str], elegiveis: list[dict[str, Any]]
+) -> list[tuple[int, dict[str, Any]]]:
+    """A busca de sempre: contagem de termo + boost de intencao (J1).
+
+    Continua indispensavel e continua primeiro. Nome de produto, preco, codigo
+    de checkout, titulo e termo tecnico exato sao casamento de string — nenhum
+    embedding acerta "Casquinhas Profissionais" melhor do que procurar
+    "casquinhas profissionais".
+    """
+
+    pontuados: list[tuple[int, dict[str, Any]]] = []
+    for linha in elegiveis:
         score = _pontuar(termos, linha)
-        # J1: o boost soma ao score lexical, e SO depois dos filtros de
-        # acesso, status, whitelist e topic. Um documento proibido nao chega
-        # aqui — o boost nunca abre porta, so reordena o que ja passou.
-        if intent_topics and score >= 0 and set(linha.get("topics") or ()) & intent_topics:
+        # J1: o boost soma ao score lexical e SO depois dos filtros de acesso,
+        # status, whitelist e topic. Documento proibido nem chegou ate aqui —
+        # o boost reordena o que ja passou, nunca abre porta.
+        if intent_topics and set(linha.get("topics") or ()) & intent_topics:
             score += TOPIC_BOOST
         if score > 0:
             pontuados.append((score, linha))
-
     pontuados.sort(key=lambda item: item[0], reverse=True)
-    selecionados = _diversify(pontuados[: limit * CANDIDATE_POOL_FACTOR], limit=limit)
+    return pontuados
+
+
+def _perna_vetorial(
+    query: str,
+    elegiveis: list[dict[str, Any]],
+    *,
+    repository: Any,
+    embedder: Any,
+) -> tuple[list[tuple[float, dict[str, Any]]], str | None]:
+    """Busca semantica sobre o MESMO conjunto elegivel.
+
+    Devolve `(ordenados, motivo_da_ausencia)`. Motivo preenchido significa que
+    a perna nao rodou — e isso e degradacao, nao erro: a resposta continua
+    saindo pelo lexical. Falha de indice nao pode virar falha de atendimento.
+
+    Chunk sem vetor simplesmente nao participa desta perna. Cobertura parcial
+    do indice degrada a busca semantica proporcionalmente, sem quebrar nada.
+    """
+
+    from brain.embeddings import cosine
+
+    checksums = {str(linha["checksum"]) for linha in elegiveis if linha.get("checksum")}
+    if not checksums:
+        return [], "chunks sem checksum"
+
+    try:
+        vetores = repository.embeddings_for_checksums(checksums, embedding_model=embedder.model)
+    except Exception as erro:  # noqa: BLE001
+        return [], f"indice indisponivel ({type(erro).__name__})"
+    if not vetores:
+        return [], "nenhum chunk elegivel esta indexado"
+
+    try:
+        consulta = _vetor_da_consulta(query, embedder)
+    except Exception as erro:  # noqa: BLE001
+        return [], f"provedor de embedding indisponivel ({type(erro).__name__})"
+
+    pontuados = [
+        (cosine(consulta, vetores[str(linha["checksum"])]), linha)
+        for linha in elegiveis
+        if str(linha.get("checksum") or "") in vetores
+    ]
+    # Cosseno negativo e o oposto do que se procura; deixar entrar so poluiria
+    # o pool com aquilo que a pergunta menos parece.
+    pontuados = [(score, linha) for score, linha in pontuados if score > 0]
+    pontuados.sort(key=lambda item: item[0], reverse=True)
+    return pontuados, None
+
+
+def search(
+    *,
+    agent_id: str,
+    query: str,
+    repository: Any,
+    limit: int = DEFAULT_LIMIT,
+    include_body: bool = True,
+    access: KnowledgeAccess | None = None,
+    mode: str | None = None,
+    embedder: Any | None = None,
+) -> SearchResult:
+    """Busca no Brain respeitando a politica de acesso.
+
+    Levanta `AccessDenied` para agente desconhecido — fail-closed, e o erro e
+    explicito em vez de uma lista vazia que parece "nao achei nada".
+
+    A PORTA CONTINUA SENDO UMA SO
+    -----------------------------
+
+    O hibrido acontece DENTRO desta funcao. Nao ha tool nova, nao ha segundo
+    caminho ate o Postgres, nao ha rota alternativa que devolva trecho sem
+    passar por aqui. Isso e resposta direta ao MOBILE_FAIL_02: naquele caso a
+    provenance sumiu porque um segundo caminho serializava diferente do
+    primeiro. Uma porta so nao tem como divergir de si mesma.
+
+    Todo resultado sai por `SearchHit.provenance` e vira `fonte` no payload —
+    o mesmo campo que `_sources_in_tool_result` le para montar
+    `sources_opened`. Um chunk trazido pelo vetor e indistinguivel, para o
+    Evidence Gate, de um trazido pelo lexical: os dois carregam a mesma
+    procedencia completa.
+    """
+
+    from time import perf_counter
+
+    from brain.rag_mode import rag_mode, uses_vector, vector_decides
+
+    comeco = perf_counter()
+    modo = mode or rag_mode()
+    politica = access or resolve_access(agent_id)
+    termos = _tokenize(query)
+    intent_topics = detect_intent_topics(query)
+
+    candidatos = repository.chunks_for_search(statuses=politica.statuses, layers=politica.layers)
+    elegiveis, bloqueados = _elegiveis(politica, candidatos)
+
+    lexical = _perna_lexical(termos, intent_topics, elegiveis)
+    teto = limit * CANDIDATE_POOL_FACTOR
+
+    vetorial: list[tuple[float, dict[str, Any]]] = []
+    motivo_sem_vetor: str | None = None
+    motor: Any = None
+    if uses_vector(modo):  # type: ignore[arg-type]
+        from brain.embeddings import get_embedder
+
+        motor = embedder or get_embedder()
+        vetorial, motivo_sem_vetor = _perna_vetorial(query, elegiveis, repository=repository, embedder=motor)
+    else:
+        motivo_sem_vetor = "rag_mode=current"
+
+    por_chunk = {str(linha["chunk_id"]): linha for _, linha in lexical}
+    por_chunk.update({str(linha["chunk_id"]): linha for _, linha in vetorial})
+    score_lexical = {str(linha["chunk_id"]): valor for valor, linha in lexical}
+    score_vetorial = {str(linha["chunk_id"]): valor for valor, linha in vetorial}
+
+    fundidos = reciprocal_rank_fusion(
+        {
+            "lexical": [str(linha["chunk_id"]) for _, linha in lexical[:teto]],
+            "vetorial": [str(linha["chunk_id"]) for _, linha in vetorial[:teto]],
+        }
+    )
+    ordem_hibrida = [(item, por_chunk[item.key]) for item in fundidos if item.key in por_chunk]
+    explicacao = {item.key: item for item, _ in ordem_hibrida}
+
+    # QUEM DECIDE O RESULTADO
+    #
+    # `hybrid`        -> a ordem fundida.
+    # `hybrid_shadow` -> a ordem lexical, byte a byte igual a `current`. O
+    #                    hibrido e calculado e registrado, e so.
+    # `current`       -> a ordem lexical, sem sequer consultar o indice.
+    if vector_decides(modo):  # type: ignore[arg-type]
+        ordenados: list[tuple[Any, dict[str, Any]]] = [(item.score, linha) for item, linha in ordem_hibrida]
+        retrieval_mode = "HYBRID"
+    else:
+        ordenados = list(lexical)
+        retrieval_mode = "HYBRID_SHADOW" if uses_vector(modo) else "LEXICAL"  # type: ignore[arg-type]
+
+    if motivo_sem_vetor and retrieval_mode != "LEXICAL":
+        # Pediu hibrido e nao teve vetor: degradou. O relatorio precisa dizer,
+        # senao um indice vazio parece um hibrido que simplesmente nao ajudou.
+        retrieval_mode = "LEXICAL_DEGRADADO"
+
+    selecionados = _diversify(ordenados[:teto], limit=limit)
 
     hits: list[SearchHit] = []
-    for score, linha in selecionados:
+    for _, linha in selecionados:
         disclosure = decide_disclosure(
             content_access=linha["content_access"],
             agent_is_customer_facing=politica.is_customer_facing,
@@ -425,9 +644,20 @@ def search(
                 secao=str(linha.get("heading") or ""),
             )
 
+        chave_chunk = str(linha["chunk_id"])
+        fundido = explicacao.get(chave_chunk)
+        ranking = None
+        if fundido is not None:
+            ranking = {
+                **fundido.as_dict(),
+                "fonte": linha.get("external_key") or linha.get("document_id"),
+                "score_lexical": score_lexical.get(chave_chunk),
+                "score_vetorial": (round(score_vetorial[chave_chunk], 6) if chave_chunk in score_vetorial else None),
+            }
+
         hits.append(
             SearchHit(
-                score=score,
+                score=int(score_lexical.get(chave_chunk, 0)),
                 provenance=Provenance(
                     source_id=str(linha["source_id"]),
                     source_kind=str(linha["source_kind"]),
@@ -459,10 +689,42 @@ def search(
                 disclosure=disclosure,
                 body=corpo,
                 flags=list(linha.get("flags") or []),
+                ranking=ranking,
             )
         )
 
-    return SearchResult(agent_id=agent_id, query=query, hits=hits, filtered_out=bloqueados)
+    sombra: list[str] = []
+    if uses_vector(modo) and not vector_decides(modo):  # type: ignore[arg-type]
+        # O que o hibrido TERIA devolvido, ja diversificado, para a comparacao
+        # ser justa. Nao toca em `hits`.
+        sombra = [
+            str(linha.get("external_key") or linha["document_id"])
+            for _, linha in _diversify([(item.score, linha) for item, linha in ordem_hibrida][:teto], limit=limit)
+        ]
+
+    resultado = SearchResult(
+        agent_id=agent_id,
+        query=query,
+        hits=hits,
+        filtered_out=bloqueados,
+        retrieval_mode=retrieval_mode,
+        rag_mode=str(modo),
+        lexical_candidates=len(lexical),
+        vector_candidates=len(vetorial),
+        final_candidates=len(hits),
+        eligible_chunks=len(elegiveis),
+        embedding_model=str(motor.model) if motor is not None else None,
+        vector_skip_reason=motivo_sem_vetor,
+        shadow_keys=sombra,
+        latency_ms=int((perf_counter() - comeco) * 1000),
+    )
+
+    # Diagnostico, nunca evidencia. Ver brain/retrieval_trace.py para por que
+    # isto nao e um segundo caminho de provenance.
+    from brain.retrieval_trace import record
+
+    record(resultado.observability())
+    return resultado
 
 
 def compare_with_lexical(*, agent_id: str, query: str, repository: Any, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:

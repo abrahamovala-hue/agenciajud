@@ -92,6 +92,36 @@ def ensure_knowledge_store(db: Any) -> None:
         else:
             log_info("aprovacoes conferem com o conteudo vigente (sem deriva)")
 
+        # F3: o modo do retrieval vai para o log de boot pelo mesmo motivo do
+        # cutover — precisa ser verificavel sem abrir o banco nem o codigo.
+        from brain.rag_mode import rag_mode_report
+
+        modo = rag_mode_report()
+        log_info(
+            f"rag mode: {modo['rag_mode']} (origem={modo['origem']}, "
+            f"vetor_decide={modo['vetor_decide']})"
+        )
+        if modo["valor_ignorado"]:
+            log_warning(
+                f"RAG_MODE={modo['valor_ignorado']!r} nao e um modo conhecido; "
+                f"caiu no default {modo['rag_mode']}."
+            )
+        try:
+            from brain.embeddings import DEFAULT_MODEL
+
+            indexaveis = len(repositorio.chunks_for_embedding())
+            cobertos = len(repositorio.embedded_checksums(embedding_model=DEFAULT_MODEL))
+            log_info(
+                f"indice semantico: {cobertos}/{indexaveis} chunks indexados com {DEFAULT_MODEL}"
+            )
+            if modo["consulta_vetor"] and not cobertos:
+                log_error(
+                    "RAG_MODE pede vetor mas o indice esta vazio: o retrieval vai degradar "
+                    "para lexical. Rode POST /admin/brain/embeddings."
+                )
+        except Exception as erro_indice:  # noqa: BLE001
+            log_warning(f"indice semantico indisponivel: {type(erro_indice).__name__}")
+
         corte = cutover_report()
         log_info(f"brain cutover: {corte['total']} agentes nativos {corte['brain_native']} (origem={corte['origem']})")
         if corte["pulados_na_ordem_recomendada"]:

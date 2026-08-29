@@ -45,6 +45,7 @@ from agents.judith_team import (
 )
 from agents.my_agent import my_agent
 from app.admin_ingestion import install_admin_ingestion
+from app.brain_admin import install_brain_admin
 from app.interfaces import build_interfaces
 from app.security import build_api_settings, install_authenticated_metadata_routes
 from brain.bootstrap import ensure_knowledge_store
@@ -139,6 +140,12 @@ install_authenticated_metadata_routes(base_app, agent_os, api_settings)
 # estiver ligada. Desligada (o padrao) ela NAO e registrada — nao e uma
 # checagem dentro do handler, o endpoint nao existe. Ver app/admin_ingestion.py
 # para os caminhos que foram testados antes de chegar nisto.
+# F3: rotas administrativas do Brain (diagnostico, indexacao, eval). Mesmo
+# padrao da ingestao: sem BRAIN_ADMIN_ENABLED elas nao existem no app.
+_brain_admin_ativo = install_brain_admin(base_app, api_settings)
+if _brain_admin_ativo:
+    log_warning("BRAIN_ADMIN_ENABLED=true: rotas administrativas do Brain ATIVAS. Desligue apos usar.")
+
 _ingestao_admin_ativa = install_admin_ingestion(base_app, api_settings)
 if _ingestao_admin_ativa:
     # Vai para o log de boot de proposito: uma rota administrativa ligada

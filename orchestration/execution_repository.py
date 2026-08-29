@@ -149,6 +149,21 @@ _OUTCOME_ALLOWLIST = (
     # booleano; nenhum conteudo, nenhum prompt, nenhuma query.
     "brain_tools_called",
     "context_added",
+    # F3 — observabilidade do Hybrid RAG. Modo, contagens, modelo e latencia.
+    # `shadow_sources` e lista de CHAVE de documento, a mesma classe de dado
+    # que `sources_opened`, que ja esta aqui. Nenhuma query, nenhum corpo,
+    # nenhum vetor: nada que reconstrua conteudo ou identifique a cliente.
+    "retrieval_mode",
+    "rag_mode",
+    "embedding_model",
+    "retrieval_calls",
+    "lexical_candidates",
+    "vector_candidates",
+    "final_candidates",
+    "document_diversity",
+    "shadow_sources",
+    "retrieval_latency_ms",
+    "vector_skip_reason",
 )
 
 

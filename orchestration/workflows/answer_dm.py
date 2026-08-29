@@ -170,6 +170,20 @@ def _finalize(
     except Exception:  # noqa: BLE001
         log.outputs["context_added"] = None
 
+    # F3: como o retrieval chegou nessas fontes. Modo, contagem de candidatos,
+    # modelo de embedding e latencia — nenhuma query, nenhum corpo, nenhum
+    # vetor. Sem isto, "o hibrido ajudou?" so seria respondivel por inferencia,
+    # que foi exatamente o buraco do MOBILE_FAIL_02.
+    try:
+        from brain.retrieval_trace import trace_summary
+
+        log.outputs.update(trace_summary())
+    except Exception as exc:  # noqa: BLE001
+        # Perder telemetria nao pode derrubar o atendimento, mas tambem nao
+        # pode sumir: sem esta marca, "o hibrido nao aparece no log" seria
+        # indistinguivel de "o hibrido nao rodou".
+        log.outputs["retrieval_mode"] = [f"INDISPONIVEL:{type(exc).__name__}"]
+
     if not gate.outbound_allowed and not escalated:
         log.escalate(raised_by=agent_id, reason=f"Evidence gate: {gate.status} — {gate.reason}", at_step="final_response")
 
@@ -419,9 +433,14 @@ def run_answer_dm(
     # ingredientes" recuperar alguma coisa. Nunca derruba a execucao.
     try:
         from brain.query_context import remember, set_session
+        from brain.retrieval_trace import start_trace
 
         set_session(session_id)
         remember(message, session_id=session_id)
+        # F3: abre o buffer de rastro do retrieval ANTES do workflow rodar. A
+        # lista e compartilhada por referencia, e e assim que o que a busca
+        # anota la dentro chega de volta aqui.
+        start_trace()
     except Exception as exc:  # noqa: BLE001
         # Perder o contexto degrada o follow-up; nao pode derrubar a resposta.
         # Mas tambem nao pode sumir em silencio: sem o log, o sintoma seria

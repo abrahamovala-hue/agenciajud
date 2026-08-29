@@ -39,6 +39,7 @@ from brain.schema import (
     build_chunks_table,
     build_conflicts_table,
     build_documents_table,
+    build_embeddings_table,
     build_sources_table,
     build_versions_table,
 )
@@ -68,6 +69,7 @@ class KnowledgeRepository:
         self.chunks: Table = build_chunks_table(self.metadata)
         self.conflicts: Table = build_conflicts_table(self.metadata)
         self.artifacts: Table = build_artifacts_table(self.metadata)
+        self.embeddings: Table = build_embeddings_table(self.metadata)
 
     # --- schema ------------------------------------------------------------
 
@@ -600,6 +602,9 @@ class KnowledgeRepository:
                 self.chunks.c.heading,
                 self.chunks.c.body,
                 self.chunks.c.token_count,
+                # F3: a chave que liga o chunk ao vetor. Sem ela a perna
+                # semantica precisaria de um join extra por busca.
+                self.chunks.c.checksum,
                 self.chunks.c.flags,
                 self.chunks.c.status.label("chunk_status"),
                 self.chunks.c.content_kind,
@@ -642,6 +647,142 @@ class KnowledgeRepository:
         )
         with self.engine.begin() as conexao:
             return [dict(linha) for linha in conexao.execute(consulta).mappings()]
+
+    # --- F3: indice semantico -----------------------------------------------
+
+    def chunks_for_embedding(self) -> list[dict[str, Any]]:
+        """Tudo que e indexavel. TODO status, TODA camada.
+
+        Indexar nao e publicar. Filtrar por status aqui faria a aprovacao de um
+        documento disparar chamada de API no meio de um boot, e deixaria um
+        documento recem-aprovado invisivel para a busca semantica ate alguem
+        rodar o pipeline. Quem decide o que SAI continua sendo o retrieval.
+
+        So a versao vigente entra: versao antiga nao e recuperavel, entao
+        indexa-la seria pagar por vetor que ninguem consulta.
+        """
+
+        consulta = (
+            select(
+                self.chunks.c.chunk_id,
+                self.chunks.c.checksum,
+                self.chunks.c.body,
+                self.versions.c.version_id,
+                self.documents.c.document_id,
+                self.documents.c.external_key,
+            )
+            .select_from(
+                self.chunks.join(self.versions, self.chunks.c.version_id == self.versions.c.version_id).join(
+                    self.documents, self.versions.c.document_id == self.documents.c.document_id
+                )
+            )
+            .where(self.versions.c.version == self.documents.c.current_version)
+        )
+        with self.engine.begin() as conexao:
+            return [dict(linha) for linha in conexao.execute(consulta).mappings()]
+
+    def embedded_checksums(self, *, embedding_model: str) -> set[str]:
+        """Checksums que ja tem vetor para ESTE modelo. A guarda da idempotencia."""
+
+        consulta = select(self.embeddings.c.content_checksum).where(
+            self.embeddings.c.embedding_model == embedding_model
+        )
+        with self.engine.begin() as conexao:
+            return {str(linha[0]) for linha in conexao.execute(consulta).all()}
+
+    def store_embeddings(
+        self,
+        *,
+        embedding_model: str,
+        dimension: int,
+        registros: list[dict[str, Any]],
+    ) -> int:
+        """Grava vetores novos. Repetido e ignorado, nao sobrescrito.
+
+        Nao ha UPSERT de proposito: `(content_checksum, embedding_model)` e
+        imutavel por construcao — o mesmo texto no mesmo modelo produz o mesmo
+        vetor. Reescrever seria trabalho para chegar ao mesmo lugar, e um
+        UPSERT esconderia um bug de identidade em vez de revelar.
+        """
+
+        if not registros:
+            return 0
+
+        existentes = self.embedded_checksums(embedding_model=embedding_model)
+        agora = _now()
+        gravados = 0
+        with self.engine.begin() as conexao:
+            for registro in registros:
+                checksum = str(registro["content_checksum"])
+                if checksum in existentes:
+                    continue
+                existentes.add(checksum)
+                conexao.execute(
+                    insert(self.embeddings).values(
+                        embedding_id=_id("emb"),
+                        content_checksum=checksum,
+                        embedding_model=embedding_model,
+                        embedding_dimension=dimension,
+                        embedding=list(registro["embedding"]),
+                        chunk_id=registro.get("chunk_id"),
+                        version_id=registro.get("version_id"),
+                        document_id=registro.get("document_id"),
+                        embedded_at=agora,
+                    )
+                )
+                gravados += 1
+        return gravados
+
+    def embeddings_for_checksums(
+        self, checksums: list[str] | set[str], *, embedding_model: str
+    ) -> dict[str, list[float]]:
+        """Vetores dos checksums pedidos. Chave -> vetor.
+
+        Recebe o conjunto que a POLITICA ja aprovou. Nao ha caminho por onde
+        esta funcao devolva o vetor de um chunk que o agente nao pode ler —
+        ela nao sabe consultar o acervo inteiro, so o que lhe entregam.
+        """
+
+        chaves = [str(c) for c in checksums]
+        if not chaves:
+            return {}
+
+        consulta = select(self.embeddings.c.content_checksum, self.embeddings.c.embedding).where(
+            and_(
+                self.embeddings.c.embedding_model == embedding_model,
+                self.embeddings.c.content_checksum.in_(chaves),
+            )
+        )
+        with self.engine.begin() as conexao:
+            return {str(checksum): list(vetor) for checksum, vetor in conexao.execute(consulta).all()}
+
+    def embedding_stats(self) -> dict[str, Any]:
+        """Cobertura do indice. Contagem, nunca vetor."""
+
+        from sqlalchemy import func
+
+        with self.engine.begin() as conexao:
+            total = int(conexao.execute(select(func.count()).select_from(self.embeddings)).scalar_one())
+            por_modelo = {
+                str(modelo): {"vetores": int(quantidade), "dimensao": int(dim)}
+                for modelo, dim, quantidade in conexao.execute(
+                    select(
+                        self.embeddings.c.embedding_model,
+                        func.max(self.embeddings.c.embedding_dimension),
+                        func.count(),
+                    ).group_by(self.embeddings.c.embedding_model)
+                ).all()
+            }
+            checksums_distintos = int(
+                conexao.execute(
+                    select(func.count(func.distinct(self.chunks.c.checksum))).select_from(self.chunks)
+                ).scalar_one()
+            )
+        return {
+            "vetores": total,
+            "por_modelo": por_modelo,
+            "checksums_distintos_em_chunks": checksums_distintos,
+        }
 
     def get_chunks(self, version_id: str) -> list[dict[str, Any]]:
         with self.engine.begin() as conexao:

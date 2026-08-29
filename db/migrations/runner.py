@@ -156,6 +156,7 @@ from db.migrations import (
     m002_knowledge_foundation,
     m003_system_layer,
     m004_primary_sources,
+    m005_vector_index,
 )
 
 MIGRATIONS: tuple[Migration, ...] = (
@@ -163,6 +164,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     m002_knowledge_foundation.MIGRATION,
     m003_system_layer.MIGRATION,
     m004_primary_sources.MIGRATION,
+    m005_vector_index.MIGRATION,
 )
 
 _versoes = [m.version for m in MIGRATIONS]

@@ -533,11 +533,18 @@ def test_shadow_nao_altera_nada(store, dev) -> None:
 #: devolve conhecimento, nao consulta o banco. Guarda a ultima mensagem da
 #: cliente e costura contexto numa query eliptica. O workflow e o unico lugar
 #: que conhece a sessao, entao e o unico que pode marca-la.
+#: `brain.retrieval_trace` entrou com a F3. Ele tambem NAO e retrieval: nao
+#: busca, nao consulta o banco, nao devolve conhecimento e nao carrega corpo.
+#: E um buffer de diagnostico — modo, contagem de candidatos, latencia — que o
+#: workflow abre antes do run e le depois. Se ele sumir, a resposta, o
+#: `sources_opened` e o Evidence Gate ficam identicos; o que se perde e a
+#: capacidade de explicar depois por que um trecho apareceu.
 _IMPORTS_DE_BRAIN_PERMITIDOS: dict[str, tuple[str, ...]] = {
     "orchestration/workflows/answer_dm.py": (
         "brain.disclosure_gate",
         "brain.access_policy",
         "brain.query_context",
+        "brain.retrieval_trace",
     ),
     "agents/knowledge_policies.py": ("brain.cutover",),
     # `step_helpers` le de `brain.cutover` apenas os NOMES das tools de

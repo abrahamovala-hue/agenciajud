@@ -17,7 +17,9 @@ A separacao existe porque cada nivel responde uma pergunta diferente:
 - **chunk**: o pedaco recuperavel, preservando estrutura (heading + ordinal).
 - **conflict**: duas fontes CONFIRMED que se contradizem, preservadas ambas.
 
-NAO ha tabela de embedding aqui. Isso e F3.
+A tabela de embedding (F3) e a sexta, e fica DE FORA dessa cadeia de
+propósito: ela nao se liga ao chunk por id, e sim pelo checksum do texto.
+Ver `build_embeddings_table`.
 
 `status` e `layer` sao String, nao Enum do banco: mudar valor de ENUM em
 Postgres exige ALTER TYPE, e isso e exatamente o tipo de migration dolorosa
@@ -49,10 +51,22 @@ VERSIONS_TABLE = "judith_knowledge_versions"
 CHUNKS_TABLE = "judith_knowledge_chunks"
 CONFLICTS_TABLE = "judith_knowledge_conflicts"
 ARTIFACTS_TABLE = "judith_knowledge_artifacts"
+EMBEDDINGS_TABLE = "judith_knowledge_embeddings"
 
 # Mesmo padrao da F1: JSONB indexavel no Postgres, JSON generico no SQLite
 # dos testes. Um caminho de codigo so.
 _JSON = JSONB().with_variant(JSON(), "sqlite")
+
+# F3: `vector(1536)` no Postgres, JSON no SQLite dos testes. Mesmo padrao.
+#
+# O import e do pacote `pgvector`, que ja e dependencia declarada desde o
+# template. O TIPO da coluna existir nao basta para o Postgres aceitar: a
+# EXTENSAO precisa estar criada, e quem faz isso e a migration 005 — que
+# falha de forma segura se a extensao nao estiver disponivel.
+from pgvector.sqlalchemy import Vector
+
+EMBEDDING_DIMENSION = 1536
+_VECTOR = Vector(EMBEDDING_DIMENSION).with_variant(JSON(), "sqlite")
 
 
 def build_sources_table(metadata: MetaData) -> Table:
@@ -252,6 +266,53 @@ def build_artifacts_table(metadata: MetaData) -> Table:
     )
 
 
+def build_embeddings_table(metadata: MetaData) -> Table:
+    """O indice semantico. Derivado, descartavel, jamais fonte de verdade.
+
+    LIGADA PELO CHECKSUM, NAO PELO chunk_id
+    ---------------------------------------
+
+    `write_chunks` e `rebuild_chunks` apagam e reinserem os chunks de uma
+    versao com id novo. Uma FK para `chunk_id` faria todo reprocessamento
+    destruir o indice inteiro e repagar a API para produzir os mesmos vetores.
+
+    A chave real e `(content_checksum, embedding_model)`. `chunk_id`,
+    `version_id` e `document_id` ficam como a ULTIMA ocorrencia vista — servem
+    para diagnostico e limpeza, nunca para o join da busca.
+
+    O TIPO DA COLUNA MUDA POR DIALETO
+    ---------------------------------
+
+    `vector(1536)` no Postgres, JSON no SQLite dos testes. Mesmo padrao ja
+    usado em `_JSON`. O calculo de cosseno acontece em Python
+    (`brain/embeddings.cosine`), entao o comportamento e identico nos dois — o
+    tipo nativo existe pelo indice HNSW, que a migration cria so no Postgres.
+
+    Descartar esta tabela inteira nao perde conhecimento nenhum: todo o
+    conteudo continua em `versions`/`chunks`. E exatamente o que torna o
+    rollback da F3 barato.
+    """
+
+    return Table(
+        EMBEDDINGS_TABLE,
+        metadata,
+        Column("embedding_id", String, primary_key=True, nullable=False),
+        # sha256 do corpo do chunk. A identidade de verdade.
+        Column("content_checksum", String, nullable=False),
+        Column("embedding_model", String, nullable=False),
+        Column("embedding_dimension", Integer, nullable=False),
+        Column("embedding", _VECTOR, nullable=False),
+        # Onde este texto foi visto pela ultima vez. Diagnostico, nao join.
+        Column("chunk_id", String, nullable=True),
+        Column("version_id", String, nullable=True),
+        Column("document_id", String, nullable=True),
+        Column("embedded_at", DateTime(timezone=True), nullable=False),
+        UniqueConstraint("content_checksum", "embedding_model", name=f"uq_{EMBEDDINGS_TABLE}_checksum_model"),
+        Index(f"ix_{EMBEDDINGS_TABLE}_model", "embedding_model"),
+        Index(f"ix_{EMBEDDINGS_TABLE}_document_id", "document_id"),
+    )
+
+
 def build_conflicts_table(metadata: MetaData) -> Table:
     """Dois conhecimentos que se contradizem. Ambos preservados.
 
@@ -293,4 +354,5 @@ def build_all(metadata: MetaData) -> list[Table]:
         build_chunks_table(metadata),
         build_conflicts_table(metadata),
         build_artifacts_table(metadata),
+        build_embeddings_table(metadata),
     ]
