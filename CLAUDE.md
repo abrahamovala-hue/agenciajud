@@ -92,13 +92,23 @@ python -m pytest tests/
 
 ## Deploy — GitHub `main` é a única fonte oficial
 
-```
-código → testes → commit → push origin/main → Railway deploya de main → smoke
+```bash
+# código → testes → commit → push → deploy a partir de main → smoke
+git push origin main
+railway redeploy --from-source --yes --service agenciajud
 ```
 
 O serviço `agenciajud` está conectado a `abrahamovala-hue/agenciajud`, branch
 `main`. Todo deployment de produção precisa carregar `commitHash` e `branch`
 verificáveis no `meta` — é assim que se sabe qual código está no ar.
+
+**O push sozinho não deploya.** Medido: 5 minutos após o push, nada disparou.
+A causa provável é o Railway GitHub App não ter acesso a este repositório —
+foi preciso passar `--branch` ao conectar a origem, que é o contorno
+documentado justamente para repo invisível ao App. Enquanto isso não for
+autorizado no GitHub, o deploy é disparado à mão com `--from-source`, que
+puxa o commit mais recente da origem configurada (≠ `redeploy` puro, que só
+reusa o build anterior).
 
 **`railway up` NÃO é o caminho normal.** Ele envia o diretório local e cria um
 deployment **sem commit nem branch**, o que abre uma divergência silenciosa:
