@@ -145,6 +145,10 @@ _OUTCOME_ALLOWLIST = (
     "disclosure_status",
     "disclosure_reason",
     "disclosure_blocked",
+    # F2.8 round 2 — observabilidade do caminho do Brain. Nomes de tool e um
+    # booleano; nenhum conteudo, nenhum prompt, nenhuma query.
+    "brain_tools_called",
+    "context_added",
 )
 
 

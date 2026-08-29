@@ -540,7 +540,17 @@ _IMPORTS_DE_BRAIN_PERMITIDOS: dict[str, tuple[str, ...]] = {
         "brain.query_context",
     ),
     "agents/knowledge_policies.py": ("brain.cutover",),
+    # `step_helpers` le de `brain.cutover` apenas os NOMES das tools de
+    # consulta — o contrato com o Evidence Gate. Nao chama o interruptor, nao
+    # monta tool, nao busca. Copiar esses nomes em vez de importa-los foi o
+    # bug que bloqueou a resposta de preco em producao.
+    "orchestration/step_helpers.py": ("brain.cutover",),
 }
+
+#: Quem pode acionar a TROCA de caminho. Importar o contrato de nomes nao e a
+#: mesma coisa que ligar/desligar o cutover — e o segundo que precisa ter um
+#: lugar so.
+_MODULOS_QUE_ACIONAM_O_CUTOVER = ("agents/knowledge_policies.py",)
 
 
 def test_brain_e_alcancado_por_uma_porta_so() -> None:
@@ -578,10 +588,26 @@ def test_brain_e_alcancado_por_uma_porta_so() -> None:
 def test_cutover_tem_um_interruptor_so() -> None:
     """Reverter precisa ser apagar um nome, nao caçar imports."""
 
+    import re
+    from pathlib import Path
+
     from brain.cutover import ENV_VAR, brain_native_agents
 
     assert ENV_VAR == "BRAIN_NATIVE_AGENTS"
-    assert len(_IMPORTS_DE_BRAIN_PERMITIDOS) == 2, "surgiu um segundo ponto de entrada no Brain"
+
+    # O que precisa ter UM lugar so e quem ACIONA a troca de caminho. Ler o
+    # contrato de nomes de tool nao aciona nada.
+    acionadores = ("is_brain_native", "build_brain_tools_for", "build_brain_retriever_for")
+    encontrados = []
+    for arquivo in list(Path("agents").rglob("*.py")) + list(Path("orchestration").rglob("*.py")):
+        texto = arquivo.read_text(encoding="utf-8")
+        if any(re.search(rf"\b{a}\b", texto) for a in acionadores):
+            encontrados.append(arquivo.as_posix())
+
+    assert sorted(encontrados) == sorted(_MODULOS_QUE_ACIONAM_O_CUTOVER), (
+        f"o cutover deixou de ter um interruptor so: {encontrados}"
+    )
+
     # Sem a variavel declarada, ninguem e nativo — o default nunca promove.
     import os
 

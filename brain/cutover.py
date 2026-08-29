@@ -45,6 +45,30 @@ from typing import Any
 
 ENV_VAR = "BRAIN_NATIVE_AGENTS"
 
+# --- CONTRATO COM O EVIDENCE RUNTIME ----------------------------------------
+#
+# Estes nomes nao sao decorativos: `orchestration/step_helpers.py` usa a lista
+# de CONSULTA para saber quais tool calls contam como "abriu uma fonte". O que
+# nao estiver la vira consulta invisivel — e o Evidence Gate acusa o agente de
+# citar fonte que nao abriu, rejeitando uma resposta correta.
+#
+# Foi exatamente o que aconteceu: o cutover renomeou `ler_documento` para
+# `buscar_conhecimento` e o extrator ficou para tras. A resposta de preco da
+# Judith foi bloqueada por citacao "fabricada" que era legitima.
+#
+# Declarar aqui, na origem, permite que um teste de contrato falhe se alguem
+# adicionar ou renomear uma tool sem avisar o outro lado.
+
+#: Tools que DEVOLVEM conhecimento. Contam como fonte aberta.
+CONSULTATION_TOOL_NAMES: frozenset[str] = frozenset({"buscar_conhecimento"})
+
+#: Tools que so declaram o que existe. Listar NAO e consultar — a regra e
+#: anterior ao cutover e continua valendo.
+LISTING_TOOL_NAMES: frozenset[str] = frozenset({"listar_fontes_disponiveis"})
+
+#: Tudo que `build_brain_tools_for` registra. O teste de contrato compara.
+BRAIN_TOOL_NAMES: frozenset[str] = CONSULTATION_TOOL_NAMES | LISTING_TOOL_NAMES
+
 #: A ordem recomendada. Nao e aplicada automaticamente — serve para o
 #: relatorio e para o teste que garante que ninguem pulou etapa.
 RECOMMENDED_ORDER: tuple[str, ...] = (

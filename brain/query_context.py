@@ -53,6 +53,10 @@ from contextvars import ContextVar
 #: enriquecimento, que e o comportamento correto para chamada isolada.
 _session: ContextVar[str | None] = ContextVar("judith_brain_session", default=None)
 
+#: Quantas vezes a query foi enriquecida NESTA execucao. Existe so para o log:
+#: sem isto, "o contexto foi usado?" so era respondivel por inferencia.
+_enriquecimentos: ContextVar[int] = ContextVar("judith_brain_enriquecimentos", default=0)
+
 #: Ultima mensagem substantiva por sessao. Uma por sessao: o follow-up se
 #: apoia no turno imediatamente anterior, nao na conversa inteira.
 _ultimo_turno: dict[str, str] = {}
@@ -142,9 +146,16 @@ def is_elliptical(mensagem: str) -> bool:
 
 
 def set_session(session_id: str | None) -> None:
-    """Marca a sessao da execucao em curso."""
+    """Marca a sessao da execucao em curso e zera o contador de enriquecimento."""
 
     _session.set(session_id)
+    _enriquecimentos.set(0)
+
+
+def enrichment_count() -> int:
+    """Quantas queries foram enriquecidas nesta execucao. So para o log."""
+
+    return _enriquecimentos.get()
 
 
 def remember(mensagem: str, *, session_id: str | None = None) -> None:
@@ -185,6 +196,7 @@ def enrich(query: str, *, session_id: str | None = None) -> tuple[str, bool]:
     if not anterior:
         return query, False
 
+    _enriquecimentos.set(_enriquecimentos.get() + 1)
     return f"{anterior} {query}".strip(), True
 
 
@@ -197,3 +209,4 @@ def reset() -> None:
 
     _ultimo_turno.clear()
     _session.set(None)
+    _enriquecimentos.set(0)

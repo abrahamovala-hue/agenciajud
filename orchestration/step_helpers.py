@@ -22,7 +22,31 @@ DecisionT = TypeVar("DecisionT", bound=AgentStepDecision)
 # Tools que contam como CONSULTAR uma fonte. `listar_fontes_*` fica de fora
 # de proposito: listar o catalogo nao e ler documento, e essa distincao e
 # justamente o que o Quality Control precisa conseguir verificar.
-_CONSULT_TOOLS = {"ler_documento", "ler_documento_de_marca", "search_knowledge_base"}
+def _brain_consultation_tools() -> frozenset[str]:
+    """Nomes declarados por `brain/cutover.py` como tools de CONSULTA.
+
+    Importado assim, e nao copiado, porque copiar foi o bug: o cutover
+    renomeou a tool e esta lista ficou para tras, tornando invisivel toda
+    consulta feita pelo nome novo. Import direto no topo criaria ciclo
+    (`cutover` -> `knowledge_policies` -> ...), entao a leitura e tardia.
+    """
+
+    try:
+        from brain.cutover import CONSULTATION_TOOL_NAMES
+
+        return CONSULTATION_TOOL_NAMES
+    except Exception:  # noqa: BLE001 - sem Brain, so o caminho legado existe
+        return frozenset()
+
+
+#: Tools cujo resultado conta como "fonte aberta" para o Evidence Gate.
+#:
+#: As tres primeiras sao o caminho lexical legado. As do Brain vem do contrato
+#: declarado em `brain/cutover.py` — ha teste garantindo que os dois lados nao
+#: divirjam de novo.
+_CONSULT_TOOLS = {"ler_documento", "ler_documento_de_marca", "search_knowledge_base"} | set(
+    _brain_consultation_tools()
+)
 
 
 def _extract_sources_opened(response: Any) -> list[str]:
@@ -57,8 +81,23 @@ def _extract_sources_opened(response: Any) -> list[str]:
     return list(dict.fromkeys(opened))
 
 
+#: Chaves onde uma tool pode aninhar a lista de trechos encontrados.
+#:
+#: `search_knowledge_base` devolve a lista crua; `buscar_conhecimento` embrulha
+#: em `{"status": ..., "resultados": [...]}`. Procurar so no topo fazia as
+#: fontes do Brain sumirem — e o Evidence Gate tratava a citacao legitima como
+#: inventada.
+#:
+#: `documentos_disponiveis` NAO entra aqui de proposito: e o retorno de
+#: `listar_fontes_disponiveis`, e listar nunca foi consultar.
+_NESTED_RESULT_KEYS = ("resultados", "results")
+
+
 def _sources_in_tool_result(content: Any) -> list[str]:
     """Extrai as chaves `fonte` do resultado de uma tool de consulta.
+
+    Aceita as duas formas em uso — lista crua e envelope com `resultados` —
+    e nunca desce ate o corpo do trecho: le so o campo de procedencia.
 
     Uma fonte marcada FONTE_NAO_DISPONIVEL e ignorada de proposito: a busca
     devolveu a lacuna, nao o documento - nada foi consultado ali.
@@ -69,12 +108,39 @@ def _sources_in_tool_result(content: Any) -> list[str]:
     except (json.JSONDecodeError, TypeError):
         return []
 
-    entries = payload if isinstance(payload, list) else [payload]
+    if isinstance(payload, dict):
+        for chave in _NESTED_RESULT_KEYS:
+            aninhado = payload.get(chave)
+            if isinstance(aninhado, list):
+                entries: list[Any] = aninhado
+                break
+        else:
+            entries = [payload]
+    elif isinstance(payload, list):
+        entries = payload
+    else:
+        return []
+
     return [
         str(entry["fonte"]).strip().upper()
         for entry in entries
         if isinstance(entry, dict) and entry.get("fonte") and entry.get("status") != "FONTE_NAO_DISPONIVEL"
     ]
+
+
+def _extract_consult_tools(response: Any) -> list[str]:
+    """Quais tools de consulta o agente de fato chamou.
+
+    Existe para observabilidade: sem isto, "o Brain foi consultado?" so era
+    respondivel reconstruindo o comportamento por inferencia.
+    """
+
+    usadas: list[str] = []
+    for message in getattr(response, "messages", None) or []:
+        nome = getattr(message, "tool_name", None)
+        if getattr(message, "role", None) == "tool" and nome in _CONSULT_TOOLS:
+            usadas.append(str(nome))
+    return list(dict.fromkeys(usadas))
 
 
 def _texto(valor: Any) -> str | None:
@@ -253,6 +319,14 @@ def run_agent_step(
             duration_ms=int((perf_counter() - inicio) * 1000),
         )
     )
+
+    # Observabilidade: QUAIS tools de consulta o agente chamou. So nomes.
+    # Sem isto, "o Brain foi consultado?" so era respondivel por inferencia —
+    # foi o que tornou o bug do Evidence Gate tao caro de encontrar.
+    usadas = _extract_consult_tools(response)
+    if usadas:
+        anteriores = log.outputs.setdefault("brain_tools_called", [])
+        anteriores.extend(t for t in usadas if t not in anteriores)
 
     decision = response.content
     if not isinstance(decision, decision_schema):

@@ -159,6 +159,17 @@ def _finalize(
         }
     )
 
+    # Observabilidade (F2.8 round 2). O bug anterior so foi encontrado
+    # reconstruindo comportamento por inferencia, porque nada disto ia para
+    # o log: quais tools o agente chamou e se a query foi enriquecida.
+    # Sao NOMES e CONTAGENS — nunca conteudo, nunca prompt, nunca telefone.
+    try:
+        from brain.query_context import enrichment_count
+
+        log.outputs["context_added"] = enrichment_count() > 0
+    except Exception:  # noqa: BLE001
+        log.outputs["context_added"] = None
+
     if not gate.outbound_allowed and not escalated:
         log.escalate(raised_by=agent_id, reason=f"Evidence gate: {gate.status} — {gate.reason}", at_step="final_response")
 

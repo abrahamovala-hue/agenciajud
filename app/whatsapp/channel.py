@@ -86,6 +86,17 @@ class ChannelLog:
     final_agent: str | None = None
     evidence_status: str | None = None
     outbound_allowed: bool | None = None
+    # --- caminho do Brain (F2.8 round 2) --------------------------------
+    #
+    # Sem estes campos, diagnosticar "o Brain foi consultado?" exigia
+    # reconstruir o comportamento por inferencia — foi o que tornou o bug do
+    # Evidence Gate caro de achar. Sao nomes de fonte, nomes de tool e
+    # booleanos: nenhum conteudo de conversa, nenhum trecho de documento,
+    # nenhuma query, nenhum telefone.
+    brain_tools_called: list[str] = field(default_factory=list)
+    sources_opened: list[str] = field(default_factory=list)
+    context_added: bool | None = None
+    disclosure_status: str | None = None
     output_mode: str | None = None
     tts_status: str = "not_requested"
     whatsapp_send_status: str = "not_sent"
@@ -403,6 +414,13 @@ async def handle_message(message: dict, config: WhatsAppConfig) -> None:
         entry.evidence_status = outputs.get("evidence_status")
         entry.outbound_allowed = bool(outputs.get("outbound_allowed"))
         entry.escalated = bool(log.escalations)
+        # F2.8 round 2: sem estes tres campos, diagnosticar "o Brain foi
+        # consultado?" exigia reconstruir o comportamento por inferencia.
+        # Sao nomes de fonte, nomes de tool e um booleano — nunca conteudo.
+        entry.sources_opened = list(outputs.get("sources_opened") or [])
+        entry.brain_tools_called = list(outputs.get("brain_tools_called") or [])
+        entry.context_added = outputs.get("context_added")
+        entry.disclosure_status = outputs.get("disclosure_status")
 
         # O QUE SAI e sempre `outbound_message`: quando o gate bloqueou, o
         # workflow ja o substituiu pela frase segura. A resposta factual
