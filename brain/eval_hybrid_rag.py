@@ -338,6 +338,7 @@ class CasoAvaliado:
     lexical_candidates: int = 0
     vector_candidates: int = 0
     latency_ms: int | None = None
+    vector_scores: list[float] = field(default_factory=list)
     vazamentos: list[str] = field(default_factory=list)
     erro: str | None = None
     ranking: list[dict[str, Any]] = field(default_factory=list)
@@ -407,7 +408,16 @@ class CasoAvaliado:
         }
 
 
-def _rodar_caso(caso: RagCase, repository: Any, *, mode: str, limit: int, embedder: Any | None) -> CasoAvaliado:
+def _rodar_caso(
+    caso: RagCase,
+    repository: Any,
+    *,
+    mode: str,
+    limit: int,
+    embedder: Any | None,
+    vector_floor: float | None = None,
+    weights: dict[str, float] | None = None,
+) -> CasoAvaliado:
     from brain.access_policy import AccessDenied
     from brain.query_context import enrich, reset, set_session
     from brain.retrieval import search
@@ -437,6 +447,8 @@ def _rodar_caso(caso: RagCase, repository: Any, *, mode: str, limit: int, embedd
             include_body=False,
             mode=mode,
             embedder=embedder,
+            vector_floor=vector_floor,
+            weights=weights,
         )
     except AccessDenied as erro:
         avaliado.erro = f"AccessDenied: {erro}"
@@ -453,6 +465,7 @@ def _rodar_caso(caso: RagCase, repository: Any, *, mode: str, limit: int, embedd
     avaliado.lexical_candidates = resultado.lexical_candidates
     avaliado.vector_candidates = resultado.vector_candidates
     avaliado.latency_ms = resultado.latency_ms
+    avaliado.vector_scores = list(resultado.vector_scores)
     avaliado.vazamentos = [f for f in avaliado.fontes if f in caso.proibido]
     avaliado.ranking = [h.ranking for h in resultado.hits if h.ranking]
     return avaliado
@@ -465,11 +478,24 @@ def run_rag_eval(
     limit: int = 4,
     embedder: Any | None = None,
     apenas_golden: bool = False,
+    vector_floor: float | None = None,
+    weights: dict[str, float] | None = None,
 ) -> list[CasoAvaliado]:
     """Roda o conjunto num modo. Nao altera nada, nao chama LLM."""
 
     casos = [c for c in HYBRID_RAG_V1 if not apenas_golden or c.query.strip().lower() in GOLDEN]
-    return [_rodar_caso(caso, repository, mode=mode, limit=limit, embedder=embedder) for caso in casos]
+    return [
+        _rodar_caso(
+            caso,
+            repository,
+            mode=mode,
+            limit=limit,
+            embedder=embedder,
+            vector_floor=vector_floor,
+            weights=weights,
+        )
+        for caso in casos
+    ]
 
 
 def _media(valores: list[float | None]) -> float | None:
@@ -501,7 +527,20 @@ def rag_summary(resultados: list[CasoAvaliado]) -> dict[str, Any]:
         entrada["mrr"] = _media(entrada.pop("_mrr"))
 
     latencias = [r.latency_ms for r in resultados if r.latency_ms is not None]
+    cossenos = sorted(s for r in resultados for s in r.vector_scores)
     return {
+        "cosseno": (
+            {
+                "minimo": cossenos[0],
+                "p25": cossenos[len(cossenos) // 4],
+                "mediana": cossenos[len(cossenos) // 2],
+                "p75": cossenos[3 * len(cossenos) // 4],
+                "maximo": cossenos[-1],
+                "amostras": len(cossenos),
+            }
+            if cossenos
+            else None
+        ),
         "casos": len(resultados),
         "casos_medidos": len(medidos),
         "casos_sem_ground_truth": sum(1 for r in resultados if r.caso.sem_ground_truth),
@@ -528,6 +567,8 @@ def compare_modes(
     *,
     limit: int = 4,
     embedder: Any | None = None,
+    vector_floor: float | None = None,
+    weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """CURRENT vs HYBRID sobre o mesmo conjunto. E o relatorio do shadow.
 
@@ -536,7 +577,14 @@ def compare_modes(
     """
 
     atual = run_rag_eval(repository, mode="current", limit=limit, embedder=embedder)
-    hibrido = run_rag_eval(repository, mode="hybrid", limit=limit, embedder=embedder)
+    hibrido = run_rag_eval(
+        repository,
+        mode="hybrid",
+        limit=limit,
+        embedder=embedder,
+        vector_floor=vector_floor,
+        weights=weights,
+    )
 
     diferencas = []
     for a, h in zip(atual, hibrido, strict=True):
@@ -564,6 +612,7 @@ def compare_modes(
     resumo_atual = rag_summary(atual)
     resumo_hibrido = rag_summary(hibrido)
     return {
+        "ajuste": {"vector_floor": vector_floor, "weights": weights},
         "current": resumo_atual,
         "hybrid": resumo_hibrido,
         "delta": {

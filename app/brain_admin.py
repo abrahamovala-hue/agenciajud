@@ -76,6 +76,12 @@ class EvalRequest(BaseModel):
     apenas_golden: bool = False
     #: Inclui o detalhe por caso. Fontes e metricas — nunca corpo.
     detalhado: bool = False
+    #: Botoes de calibragem do hibrido. Existem para VARRER valores contra o
+    #: acervo real e escolher por medicao — os defaults do codigo continuam
+    #: sendo os do modulo, e mudar producao continua sendo commit.
+    vector_floor: float | None = Field(default=None, ge=0.0, le=1.0)
+    lexical_weight: float | None = Field(default=None, ge=0.0, le=10.0)
+    vector_weight: float | None = Field(default=None, ge=0.0, le=10.0)
 
 
 def _diagnostico_do_banco(engine: Any) -> dict[str, Any]:
@@ -239,9 +245,19 @@ def install_brain_admin(base_app: FastAPI, settings: Any) -> bool:
         from brain.eval_hybrid_rag import compare_modes, rag_summary, run_rag_eval
 
         repositorio = _repositorio()
+        pesos = (
+            {"lexical": payload.lexical_weight or 1.0, "vetorial": payload.vector_weight or 1.0}
+            if (payload.lexical_weight is not None or payload.vector_weight is not None)
+            else None
+        )
 
         if payload.mode == "compare":
-            resultado = compare_modes(repositorio, limit=payload.limit)
+            resultado = compare_modes(
+                repositorio,
+                limit=payload.limit,
+                vector_floor=payload.vector_floor,
+                weights=pesos,
+            )
             if not payload.detalhado:
                 resultado.pop("diferencas", None)
             return resultado
@@ -254,6 +270,8 @@ def install_brain_admin(base_app: FastAPI, settings: Any) -> bool:
             mode=payload.mode,
             limit=payload.limit,
             apenas_golden=payload.apenas_golden,
+            vector_floor=payload.vector_floor,
+            weights=pesos,
         )
         corpo: dict[str, Any] = {"modo": payload.mode, **rag_summary(casos)}
         if payload.detalhado:

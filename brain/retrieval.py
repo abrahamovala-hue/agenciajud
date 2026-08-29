@@ -169,6 +169,27 @@ def detect_intent_topics(query: str) -> frozenset[str]:
     return frozenset()
 
 
+#: Piso de similaridade da perna vetorial. Abaixo disto o chunk nao entra.
+#:
+#: EXISTE PORQUE BUSCA VETORIAL SEMPRE DEVOLVE ALGUMA COISA
+#:
+#: Cosseno nao tem nocao de "nao sei". Perguntada sobre o engajamento do
+#: Instagram — que o Brain nao tem —, a perna vetorial devolve o que for menos
+#: distante, e a lacuna vira uma resposta parecida. Medido no shadow de
+#: producao: as lacunas corretas cairam de 1/2 para 0/2 quando o vetor entrou
+#: sem piso.
+#:
+#: O valor e calibrado por medicao, nao por intuicao — ver o relatorio da F3.
+VECTOR_SCORE_FLOOR = 0.0
+
+#: Peso de cada perna na fusao.
+#:
+#: O brief da F3 e explicito: "lexical provavelmente deve ter peso muito
+#: forte" para nome de produto, preco, codigo e titulo. Comeca simetrico e e
+#: ajustado por medicao — nunca por intuicao.
+LEXICAL_WEIGHT = 1.0
+VECTOR_WEIGHT = 1.0
+
 #: Teto de chunks do MESMO documento no resultado final.
 #:
 #: A F2.5 media isso: um documento longo ocupava o top-k inteiro e expulsava a
@@ -294,6 +315,9 @@ class SearchResult:
     embedding_model: str | None = None
     #: Por que a perna vetorial nao rodou, quando nao rodou.
     vector_skip_reason: str | None = None
+    #: Cossenos do pool vetorial, em ordem. Numero, nunca texto — e o que
+    #: permite calibrar o piso por medicao em vez de intuicao.
+    vector_scores: list[float] = field(default_factory=list)
     #: Modo shadow: o top-k que o hibrido TERIA devolvido. Nao afeta `hits`.
     shadow_keys: list[str] = field(default_factory=list)
     latency_ms: int | None = None
@@ -486,6 +510,7 @@ def _perna_vetorial(
     *,
     repository: Any,
     embedder: Any,
+    floor: float = VECTOR_SCORE_FLOOR,
 ) -> tuple[list[tuple[float, dict[str, Any]]], str | None]:
     """Busca semantica sobre o MESMO conjunto elegivel.
 
@@ -520,9 +545,9 @@ def _perna_vetorial(
         for linha in elegiveis
         if str(linha.get("checksum") or "") in vetores
     ]
-    # Cosseno negativo e o oposto do que se procura; deixar entrar so poluiria
-    # o pool com aquilo que a pergunta menos parece.
-    pontuados = [(score, linha) for score, linha in pontuados if score > 0]
+    # Abaixo do piso o trecho nao e "menos relevante": ele e ruido que o
+    # cosseno nao sabe recusar. Ver a nota de VECTOR_SCORE_FLOOR.
+    pontuados = [(score, linha) for score, linha in pontuados if score > max(floor, 0.0)]
     pontuados.sort(key=lambda item: item[0], reverse=True)
     return pontuados, None
 
@@ -537,6 +562,8 @@ def search(
     access: KnowledgeAccess | None = None,
     mode: str | None = None,
     embedder: Any | None = None,
+    vector_floor: float | None = None,
+    weights: dict[str, float] | None = None,
 ) -> SearchResult:
     """Busca no Brain respeitando a politica de acesso.
 
@@ -582,7 +609,13 @@ def search(
         from brain.embeddings import get_embedder
 
         motor = embedder or get_embedder()
-        vetorial, motivo_sem_vetor = _perna_vetorial(query, elegiveis, repository=repository, embedder=motor)
+        vetorial, motivo_sem_vetor = _perna_vetorial(
+            query,
+            elegiveis,
+            repository=repository,
+            embedder=motor,
+            floor=VECTOR_SCORE_FLOOR if vector_floor is None else vector_floor,
+        )
     else:
         motivo_sem_vetor = "rag_mode=current"
 
@@ -595,7 +628,8 @@ def search(
         {
             "lexical": [str(linha["chunk_id"]) for _, linha in lexical[:teto]],
             "vetorial": [str(linha["chunk_id"]) for _, linha in vetorial[:teto]],
-        }
+        },
+        weights=weights or {"lexical": LEXICAL_WEIGHT, "vetorial": VECTOR_WEIGHT},
     )
     ordem_hibrida = [(item, por_chunk[item.key]) for item in fundidos if item.key in por_chunk]
     explicacao = {item.key: item for item, _ in ordem_hibrida}
@@ -715,6 +749,7 @@ def search(
         eligible_chunks=len(elegiveis),
         embedding_model=str(motor.model) if motor is not None else None,
         vector_skip_reason=motivo_sem_vetor,
+        vector_scores=[round(score, 4) for score, _ in vetorial[:teto]],
         shadow_keys=sombra,
         latency_ms=int((perf_counter() - comeco) * 1000),
     )
