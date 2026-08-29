@@ -509,3 +509,73 @@ class TestObservabilidade:
         faltando = set(trace_summary()) - set(_OUTCOME_ALLOWLIST)
         reset()
         assert not faltando, f"campos fora da allowlist do ExecutionLog: {faltando}"
+
+
+# =============================================================================
+# TIPOS QUE SO APARECEM EM PRODUCAO
+# =============================================================================
+
+
+class TestTiposDoDialeto:
+    """O SQLite dos testes devolve `float`; o pgvector devolve `numpy.float32`.
+
+    Essa diferenca derrubou a rota de eval em producao com
+    `PydanticSerializationError: Unable to serialize unknown type:
+    <class 'numpy.float32'>` — depois de a suite inteira passar em verde.
+
+    Estes testes injetam o tipo de producao no dialeto de teste. E a unica
+    forma honesta de cobrir a diferenca sem um Postgres na suite.
+    """
+
+    def test_cosine_devolve_float_de_python(self) -> None:
+        import numpy as np
+
+        resultado = cosine([np.float32(1.0), np.float32(0.0)], [np.float32(1.0), np.float32(0.0)])
+        assert type(resultado) is float
+
+    def test_busca_com_vetor_numpy_serializa(self, brain_indexado, embedder) -> None:
+        """Reproduz o dialeto de producao: vetor de numpy vindo do banco."""
+
+        import json
+
+        import numpy as np
+
+        real = brain_indexado.embeddings_for_checksums
+
+        class RepoComNumpy:
+            def __init__(self, base):
+                self._base = base
+
+            def chunks_for_search(self, **kwargs):
+                return self._base.chunks_for_search(**kwargs)
+
+            def embeddings_for_checksums(self, checksums, *, embedding_model):
+                return {
+                    chave: np.array(vetor, dtype=np.float32)
+                    for chave, vetor in real(checksums, embedding_model=embedding_model).items()
+                }
+
+        resultado = search(
+            agent_id=VENDEDOR,
+            query="quanto custa o ebook das casquinhas?",
+            repository=RepoComNumpy(brain_indexado),
+            mode="hybrid",
+            embedder=embedder,
+        )
+        assert resultado.hits
+        # Se algum numero derivado do cosseno for numpy, isto estoura.
+        json.dumps(resultado.observability())
+        json.dumps(resultado.vector_scores)
+
+    def test_o_repositorio_converte_na_fronteira(self, brain_indexado) -> None:
+        from brain.embeddings import DEFAULT_MODEL, DeterministicEmbedder
+
+        modelo = DeterministicEmbedder().model
+        assert modelo != DEFAULT_MODEL
+
+        linhas = brain_indexado.chunks_for_embedding()
+        vetores = brain_indexado.embeddings_for_checksums(
+            {str(linhas[0]["checksum"])}, embedding_model=modelo
+        )
+        for vetor in vetores.values():
+            assert all(type(v) is float for v in vetor)

@@ -150,14 +150,21 @@ def cosine(a: list[float], b: list[float]) -> float:
     chega ja filtrado pela politica, e e pequeno.
     """
 
-    if not a or not b or len(a) != len(b):
+    # Comprimento, e nao valor-verdade: `not a` levanta ValueError quando `a` e
+    # um `numpy.ndarray` com mais de um elemento — e e exatamente isso que o
+    # pgvector devolve. O repositorio ja converte na fronteira; esta guarda
+    # existe para que a funcao continue correta se alguem chamar direto.
+    if len(a) == 0 or len(b) == 0 or len(a) != len(b):
         return 0.0
     produto = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0.0 or nb == 0.0:
         return 0.0
-    return produto / (na * nb)
+    # `float()` explicito: se um vetor chegar com escalar de numpy — apesar da
+    # conversao no repositorio — o resultado ainda sai como float de Python.
+    # Defesa em profundidade contra um tipo que so aparece em producao.
+    return float(produto / (na * nb))
 
 
 def get_embedder() -> Embedder:

@@ -741,6 +741,17 @@ class KnowledgeRepository:
         Recebe o conjunto que a POLITICA ja aprovou. Nao ha caminho por onde
         esta funcao devolva o vetor de um chunk que o agente nao pode ler —
         ela nao sabe consultar o acervo inteiro, so o que lhe entregam.
+
+        `float(v)` NAO e decorativo. `pgvector` devolve `numpy.ndarray` de
+        `float32`; o JSON do SQLite devolve `float` de Python. Sem a conversao,
+        todo numero derivado do cosseno vira `numpy.float32` e a serializacao
+        estoura la na frente — em producao, e so em producao, porque o dialeto
+        de teste esconde a diferenca. Foi exatamente o que aconteceu:
+        `PydanticSerializationError: Unable to serialize unknown type:
+        <class 'numpy.float32'>` na rota de eval.
+
+        A fronteira do repositorio e o lugar certo: e onde tipo de banco vira
+        tipo de Python. Converter la na frente seria caçar cada derivada.
         """
 
         chaves = [str(c) for c in checksums]
@@ -754,7 +765,9 @@ class KnowledgeRepository:
             )
         )
         with self.engine.begin() as conexao:
-            return {str(checksum): list(vetor) for checksum, vetor in conexao.execute(consulta).all()}
+            return {
+                str(checksum): [float(v) for v in vetor] for checksum, vetor in conexao.execute(consulta).all()
+            }
 
     def embedding_stats(self) -> dict[str, Any]:
         """Cobertura do indice. Contagem, nunca vetor."""
