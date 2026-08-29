@@ -90,6 +90,33 @@ docker compose restart agentos-api
 python -m pytest tests/
 ```
 
+## Deploy — GitHub `main` é a única fonte oficial
+
+```
+código → testes → commit → push origin/main → Railway deploya de main → smoke
+```
+
+O serviço `agenciajud` está conectado a `abrahamovala-hue/agenciajud`, branch
+`main`. Todo deployment de produção precisa carregar `commitHash` e `branch`
+verificáveis no `meta` — é assim que se sabe qual código está no ar.
+
+**`railway up` NÃO é o caminho normal.** Ele envia o diretório local e cria um
+deployment **sem commit nem branch**, o que abre uma divergência silenciosa:
+o Railway continua exibindo a origem do GitHub enquanto roda outra coisa.
+
+Foi o que aconteceu de fato: a origem do serviço ficou presa em `49f4121`
+enquanto produção rodava 15 commits à frente, vindos de uploads. Um
+"Redeploy from GitHub" teria revertido sete fases de trabalho.
+
+`railway up` fica disponível só para emergência — e, se for usado, a
+divergência precisa ser desfeita em seguida com um deploy a partir de `main`.
+
+Conferir a proveniência do que está no ar:
+
+```bash
+railway deployment list --json | python -c "import sys,json; m=json.load(sys.stdin)[0]['meta']; print(m.get('branch'), m.get('commitHash'))"
+```
+
 ## Env vars
 
 Ver `.env.example` pra lista comentada. Obrigatórias em produção:
