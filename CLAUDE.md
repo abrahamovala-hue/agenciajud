@@ -136,6 +136,31 @@ Ver `.env.example` pra lista comentada. Obrigatórias em produção:
 - `WHATSAPP_ENABLED`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` quando ligar o canal
 - `PRINT_ENV_ON_LOAD=False` (sempre)
 
+### F3 — Hybrid RAG
+
+| Var | Valores | Default | O que faz |
+|---|---|---|---|
+| `RAG_MODE` | `current` \| `hybrid_shadow` \| `hybrid` | `current` | Como o Brain recupera. Valor desconhecido cai no default. |
+| `BRAIN_ADMIN_ENABLED` | `true` \| ausente | ausente | Registra `/admin/brain/{status,embeddings,eval}`. Desligue depois de usar. |
+| `BRAIN_EMBEDDER` | `deterministic` \| ausente | ausente | `deterministic` roda a suite sem rede. **Nunca em producao.** |
+
+`RAG_MODE` e o rollback da F3: apagar a variavel volta ao lexical puro, sem
+migration e sem rebuild. `hybrid_shadow` calcula o hibrido, registra no
+ExecutionLog e devolve o resultado lexical — shadow que muda a resposta nao e
+shadow.
+
+O indice semantico vive em `judith_knowledge_embeddings` (migration 005,
+reversivel). Ele e DERIVADO: descartar a tabela nao perde conhecimento, so
+custa reindexar. Modelo: `text-embedding-3-small`, 1536 dimensoes, pela
+`OPENAI_API_KEY` que ja existe.
+
+Indexar producao (as rotas so existem com a flag ligada):
+
+```bash
+curl -H "Authorization: Bearer $OS_SECURITY_KEY"   https://agenciajud-production.up.railway.app/admin/brain/status
+curl -X POST -H "Authorization: Bearer $OS_SECURITY_KEY" -H "Content-Type: application/json"   -d '{}' https://agenciajud-production.up.railway.app/admin/brain/embeddings
+```
+
 ## Adicionar features (trilha de evolução)
 
 Alunos avançados podem estender:
