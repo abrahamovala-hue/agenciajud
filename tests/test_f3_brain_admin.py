@@ -294,3 +294,42 @@ class TestExecutions:
         base, _ = _app()
         corpo = _cliente(base).get(f"{ROUTE_EXECUTIONS}?limit=9999", headers=AUTORIZADO).json()
         assert len(corpo["execucoes"]) <= 25
+
+
+class TestTelemetriaDeTargeting:
+    """A projecao da rota tem que acompanhar a allowlist do ExecutionLog.
+
+    As duas listas sao independentes, e ficaram fora de sincronia: os campos de
+    source targeting eram persistidos e nao apareciam na rota. O smoke mostrava
+    OFFERS no resultado sem dizer se ela venceu o ranking ou recebeu a vaga
+    reservada — que e exatamente a pergunta que a rota existe para responder.
+    """
+
+    def test_a_rota_projeta_o_que_o_rastro_produz(self) -> None:
+        from app.brain_admin import _CAMPOS_DE_OUTCOME
+        from brain.retrieval_trace import record, reset, start_trace, trace_summary
+
+        reset()
+        start_trace()
+        record(
+            {
+                "retrieval_mode": "HYBRID",
+                "rag_mode": "hybrid",
+                "canonical_target_requested": ["preco"],
+                "canonical_target_available": True,
+                "canonical_target_selected": True,
+            }
+        )
+        produzidos = set(trace_summary())
+        reset()
+
+        faltando = produzidos - set(_CAMPOS_DE_OUTCOME)
+        assert not faltando, f"o rastro produz campos que a rota nao mostra: {faltando}"
+
+    def test_a_projecao_cabe_na_allowlist(self) -> None:
+        """E o inverso: a rota nao pode mostrar o que nao pode ser persistido."""
+
+        from app.brain_admin import _CAMPOS_DE_OUTCOME
+        from orchestration.execution_repository import _OUTCOME_ALLOWLIST
+
+        assert set(_CAMPOS_DE_OUTCOME) <= set(_OUTCOME_ALLOWLIST)

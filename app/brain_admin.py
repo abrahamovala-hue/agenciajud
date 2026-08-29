@@ -130,6 +130,12 @@ _CAMPOS_DE_OUTCOME = (
     "shadow_sources",
     "retrieval_latency_ms",
     "vector_skip_reason",
+    # POST-F3 — source targeting. Sem estes tres a rota mostrava a resposta
+    # certa sem mostrar POR QUE ela estava certa: "OFFERS venceu o ranking" e
+    # "OFFERS entrou pela vaga reservada" ficavam indistinguiveis.
+    "canonical_target",
+    "canonical_target_available",
+    "canonical_target_selected",
 )
 
 
