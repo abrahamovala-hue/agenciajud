@@ -179,14 +179,61 @@ def detect_intent_topics(query: str) -> frozenset[str]:
 #: producao: as lacunas corretas cairam de 1/2 para 0/2 quando o vetor entrou
 #: sem piso.
 #:
-#: O valor e calibrado por medicao, nao por intuicao — ver o relatorio da F3.
-VECTOR_SCORE_FLOOR = 0.0
+#: O VALOR FOI MEDIDO, NAO ESCOLHIDO
+#:
+#: Varredura contra o acervo real de producao (33 casos, 709 chunks indexados,
+#: `text-embedding-3-small`). Distribuicao de cosseno observada no pool:
+#: minimo 0.206, p25 0.341, mediana 0.414, p75 0.513, maximo 0.727.
+#:
+#:     piso   recall@4   MRR    hit    OFFERS nos casos de preco   regressao golden
+#:     ----   --------   ----   ----   ---------------------      ----------------
+#:     (sem)     0.680   .683   0.80             -                       1
+#:      0.35     0.707   .683   0.80             -                       1
+#:      0.45     0.757   .713   0.88             -                       2
+#:      0.50     0.773   .703   0.88           (perde a frase da Judith) 0
+#:      0.575    0.767   .700   0.88           6/8                       1
+#:      0.60     0.780   .707   0.88           6/8                       0   <--
+#:      0.625    0.700   .667   0.80           4/8                       0
+#:      0.65     0.660   .653   0.76           3/8                       0
+#:     lexical   0.700   .670   0.80           4/8                       -
+#:
+#: 0.60 e o unico ponto com ZERO regressao golden e delta positivo em recall,
+#: MRR, hit rate e diversidade ao mesmo tempo. E o unico que acha OFFERS nas
+#: TRES formulacoes de preco, incluindo a frase literal que a Judith reprovou
+#: no celular — que o lexical acerta e o piso 0.50 perde.
+#:
+#: POR QUE DESPENCA ACIMA DE 0.625, E POR QUE ISSO IMPORTA
+#:
+#: Com piso alto sobram poucos candidatos vetoriais, e no RRF quem sobra ocupa
+#: a 1a posicao da perna — recebendo a contribuicao MAXIMA. Uma perna quase
+#: vazia empurra os poucos resultados dela para cima com forca total e
+#: desloca resultados lexicais bons. Por isso 0.65 fica ABAIXO do lexical puro
+#: (0.660 contra 0.700) em vez de convergir para ele.
+#:
+#: Ou seja: 0.60 fica na borda direita de um platô estreito (0.575-0.60).
+#: Isso e uma fragilidade real e esta declarada. Quando o acervo mudar, o
+#: numero precisa ser MEDIDO DE NOVO por `POST /admin/brain/eval` com
+#: `vector_floor` — nao ajustado por intuicao.
+#:
+#: O valor mora em `Embedder.score_floor`, porque a faixa util de cosseno e
+#: propriedade do MODELO e nao do retrieval. Esta constante e so o default de
+#: quem nao tem embedder em maos.
+VECTOR_SCORE_FLOOR = 0.60
 
 #: Peso de cada perna na fusao.
 #:
-#: O brief da F3 e explicito: "lexical provavelmente deve ter peso muito
-#: forte" para nome de produto, preco, codigo e titulo. Comeca simetrico e e
-#: ajustado por medicao — nunca por intuicao.
+#: O brief da F3 dizia "lexical provavelmente deve ter peso muito forte". A
+#: medicao contradisse, e a medicao ganha:
+#:
+#:     pesos 1.0/1.0  ->  recall 0.780
+#:     pesos 2.0/1.0  ->  recall 0.633
+#:     pesos 3.0/1.0  ->  recall 0.633
+#:
+#: O motivo e que o peso lexical ja existe por outro caminho: o boost de
+#: intencao (J1, TOPIC_BOOST=5) e o proprio scorer, que privilegia titulo e
+#: chave. Somar peso na fusao empilha a mesma preferencia duas vezes e sufoca
+#: justamente a contribuicao vetorial que estava consertando as consultas de
+#: preco. Ficam simetricos.
 LEXICAL_WEIGHT = 1.0
 VECTOR_WEIGHT = 1.0
 
@@ -609,12 +656,11 @@ def search(
         from brain.embeddings import get_embedder
 
         motor = embedder or get_embedder()
+        piso = vector_floor
+        if piso is None:
+            piso = float(getattr(motor, "score_floor", VECTOR_SCORE_FLOOR))
         vetorial, motivo_sem_vetor = _perna_vetorial(
-            query,
-            elegiveis,
-            repository=repository,
-            embedder=motor,
-            floor=VECTOR_SCORE_FLOOR if vector_floor is None else vector_floor,
+            query, elegiveis, repository=repository, embedder=motor, floor=piso
         )
     else:
         motivo_sem_vetor = "rag_mode=current"

@@ -68,10 +68,22 @@ MAX_CHARS = 24_000
 
 
 class Embedder(Protocol):
-    """O contrato minimo. Duas implementacoes: OpenAI e deterministica."""
+    """O contrato minimo. Duas implementacoes: OpenAI e deterministica.
+
+    `score_floor` faz parte do contrato de proposito: o cosseno "bom" NAO tem
+    valor universal, ele depende do modelo. Medido:
+
+        text-embedding-3-small   0.206 .. 0.727   (mediana 0.414)
+        deterministic-hash-v1    0.043 .. 0.354   (mediana 0.136)
+
+    Um piso guardado longe do modelo seria calibrado para um e aplicado ao
+    outro em silencio. Amarrando os dois, trocar de modelo obriga a declarar o
+    piso daquele modelo — nao ha como esquecer.
+    """
 
     model: str
     dimension: int
+    score_floor: float
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
@@ -87,6 +99,9 @@ class OpenAIEmbedder:
 
     model: str = DEFAULT_MODEL
     dimension: int = DEFAULT_DIMENSION
+    #: Calibrado por varredura contra o acervo real — ver a tabela em
+    #: `brain/retrieval.py:VECTOR_SCORE_FLOOR`.
+    score_floor: float = 0.60
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         from openai import OpenAI
@@ -116,6 +131,11 @@ class DeterministicEmbedder:
 
     model: str = "deterministic-hash-v1"
     dimension: int = 64
+    #: Zero: sem semantica, o cosseno deste embedder vive entre 0.04 e 0.35 e
+    #: nao ha faixa "boa" a recortar. Aplicar o piso de producao aqui
+    #: silenciaria a perna vetorial inteira e os testes de encanamento
+    #: passariam a medir nada.
+    score_floor: float = 0.0
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         from agents.knowledge_sources import _tokenize

@@ -579,3 +579,109 @@ class TestTiposDoDialeto:
         )
         for vetor in vetores.values():
             assert all(type(v) is float for v in vetor)
+
+
+# =============================================================================
+# PISO DE SIMILARIDADE
+# =============================================================================
+
+
+class TestPisoDeSimilaridade:
+    """O piso e o que impede a perna vetorial de responder quando nao sabe.
+
+    Cosseno nao tem nocao de "nao sei": perguntado sobre algo que o Brain nao
+    tem, ele devolve o que estiver menos distante. O valor de producao foi
+    calibrado por varredura contra o acervo real — ver a nota em
+    `VECTOR_SCORE_FLOOR`. Aqui se prova que ele e APLICADO, nao qual e.
+    """
+
+    def test_o_piso_de_producao_esta_declarado(self) -> None:
+        from brain.retrieval import LEXICAL_WEIGHT, VECTOR_SCORE_FLOOR, VECTOR_WEIGHT
+
+        assert 0.0 < VECTOR_SCORE_FLOOR < 1.0
+        assert LEXICAL_WEIGHT == VECTOR_WEIGHT, "assimetria de peso foi medida e reprovada"
+
+    def test_o_piso_pertence_ao_modelo(self) -> None:
+        """Trocar de embedder tem que trocar o piso junto, ou nao trocar nada."""
+
+        from brain.embeddings import OpenAIEmbedder
+        from brain.retrieval import VECTOR_SCORE_FLOOR
+
+        assert OpenAIEmbedder().score_floor == VECTOR_SCORE_FLOOR
+        assert DeterministicEmbedder().score_floor == 0.0, (
+            "o embedder de teste vive numa escala de cosseno diferente (0.04-0.35); "
+            "aplicar o piso de producao nele silenciaria a perna vetorial inteira"
+        )
+
+    def test_search_usa_o_piso_do_embedder(self, brain_indexado) -> None:
+        # Instancia, nao subclasse: `DeterministicEmbedder` e um dataclass, e o
+        # `__init__` dele sobrescreveria um atributo de classe herdado.
+        exigente = DeterministicEmbedder()
+        exigente.score_floor = 0.99
+
+        resultado = search(
+            agent_id=VENDEDOR,
+            query="quanto custa?",
+            repository=brain_indexado,
+            mode="hybrid",
+            embedder=exigente,
+        )
+        assert resultado.vector_candidates == 0
+
+    def test_piso_alto_silencia_a_perna_vetorial(self, brain_indexado, embedder) -> None:
+        resultado = search(
+            agent_id=VENDEDOR,
+            query="quanto custa?",
+            repository=brain_indexado,
+            mode="hybrid",
+            embedder=embedder,
+            vector_floor=0.999,
+        )
+        assert resultado.vector_candidates == 0
+        assert resultado.hits, "sem vetor, o lexical continua respondendo"
+
+    def test_piso_zero_deixa_tudo_passar(self, brain_indexado, embedder) -> None:
+        com_piso = search(
+            agent_id=VENDEDOR,
+            query="quanto custa?",
+            repository=brain_indexado,
+            mode="hybrid",
+            embedder=embedder,
+            vector_floor=0.5,
+        )
+        sem_piso = search(
+            agent_id=VENDEDOR,
+            query="quanto custa?",
+            repository=brain_indexado,
+            mode="hybrid",
+            embedder=embedder,
+            vector_floor=0.0,
+        )
+        assert sem_piso.vector_candidates >= com_piso.vector_candidates
+
+    def test_todo_candidato_vetorial_respeita_o_piso(self, brain_indexado, embedder) -> None:
+        resultado = search(
+            agent_id=SUPORTE,
+            query="ganache emulsao temperagem",
+            repository=brain_indexado,
+            mode="hybrid",
+            embedder=embedder,
+            vector_floor=0.3,
+        )
+        assert all(score > 0.3 for score in resultado.vector_scores)
+
+    def test_pesos_mudam_a_ordem_e_nao_a_permissao(self, brain_indexado, embedder) -> None:
+        from brain.access_policy import resolve_access
+
+        permitido = set(resolve_access(VENDEDOR).external_keys or ())
+        for pesos in ({"lexical": 1.0, "vetorial": 1.0}, {"lexical": 5.0, "vetorial": 0.1}):
+            resultado = search(
+                agent_id=VENDEDOR,
+                query="ganache pistache emulsao",
+                repository=brain_indexado,
+                mode="hybrid",
+                embedder=embedder,
+                weights=pesos,
+            )
+            fontes = {h.provenance.external_key or h.provenance.document_id for h in resultado.hits}
+            assert fontes <= permitido
