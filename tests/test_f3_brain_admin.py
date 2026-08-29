@@ -235,6 +235,7 @@ class TestExecutions:
         from orchestration.execution_log import ExecutionLog
         from orchestration.execution_repository import (
             ExecutionRepository,
+            get_execution_repository,
             persist_execution,
             set_execution_repository,
         )
@@ -244,6 +245,10 @@ class TestExecutions:
         )
         repositorio = ExecutionRepository(engine)
         repositorio.ensure_table()
+        # Guardar o anterior e obrigatorio: a fixture autouse da suite aponta
+        # a persistencia para memoria por teste, e deixar o global apontando
+        # para um engine ja descartado vaza estado para quem rodar depois.
+        anterior_exec = get_execution_repository()
         set_execution_repository(repositorio)
 
         log = ExecutionLog(workflow="ANSWER_DM", channel="whatsapp")
@@ -265,6 +270,7 @@ class TestExecutions:
         log.finish(status="completed")
         persist_execution(log)
         yield store
+        set_execution_repository(anterior_exec)
         engine.dispose()
 
     def test_exige_bearer(self, ligado, store) -> None:
