@@ -81,6 +81,9 @@ class EvalRequest(BaseModel):
     #: acervo real e escolher por medicao — os defaults do codigo continuam
     #: sendo os do modulo, e mudar producao continua sendo commit.
     vector_floor: float | None = Field(default=None, ge=0.0, le=1.0)
+    #: Desliga o source targeting canonico SO nesta medicao. Serve para provar
+    #: causalidade (antes/depois na mesma execucao); producao usa o default.
+    canonical_targeting: bool = True
     lexical_weight: float | None = Field(default=None, ge=0.0, le=10.0)
     vector_weight: float | None = Field(default=None, ge=0.0, le=10.0)
 
@@ -303,6 +306,7 @@ def install_brain_admin(base_app: FastAPI, settings: Any) -> bool:
                 limit=payload.limit,
                 vector_floor=payload.vector_floor,
                 weights=pesos,
+                canonical_targeting=payload.canonical_targeting,
             )
             if not payload.detalhado:
                 resultado.pop("diferencas", None)
@@ -318,6 +322,7 @@ def install_brain_admin(base_app: FastAPI, settings: Any) -> bool:
             apenas_golden=payload.apenas_golden,
             vector_floor=payload.vector_floor,
             weights=pesos,
+            canonical_targeting=payload.canonical_targeting,
         )
         corpo: dict[str, Any] = {"modo": payload.mode, **rag_summary(casos)}
         if payload.detalhado:

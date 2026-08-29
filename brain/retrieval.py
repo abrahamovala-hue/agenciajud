@@ -154,6 +154,55 @@ _INTENT_TOPICS: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
 )
 
 
+#: Topics que identificam A FONTE DE REFERENCIA de uma intencao.
+#:
+#: POR QUE ISTO EXISTE
+#: -------------------
+#:
+#: `TOPIC_BOOST` representa canonicalidade como um bonus ADITIVO FIXO (+5)
+#: dentro de um score lexical ILIMITADO — `_pontuar` cresce com o numero de
+#: tokens, com a repeticao deles e com a densidade do nome do produto. Medido
+#: na auditoria de composicao de query:
+#:
+#:     "Ola qual o preco do ebook das casquinhas profissionais?"
+#:         PRODUCTS  22        OFFERS  14  (9 + boost 5)
+#:
+#:     query que o agente compos a partir dela (termos repetidos):
+#:         PRODUCTS  43        OFFERS  25  (20 + boost 5)
+#:
+#: O boost e constante; a vantagem do outro documento cresce. Como a query e
+#: escrita livremente pelo LLM, a magnitude varia a cada execucao e OFFERS nao
+#: tem entrada garantida no top-k — dependia de o LLM ter escrito uma pergunta
+#: curta o bastante. Em producao isso falhava em ~1 de cada 4 consultas de
+#: preco, nas DUAS pernas (lexical e vetorial).
+#:
+#: A correcao nao mexe em ranking: reserva UMA vaga do top-k para a fonte
+#: canonica, DEPOIS da fusao. Ver `_diversify`.
+#:
+#: POR QUE `preco` E NAO `oferta`
+#:
+#: Verificado no acervo inteiro: `preco` e declarado SOMENTE por OFFERS;
+#: `oferta` tambem alcanca SITE_SNAPSHOT. A distincao ja estava escrita na
+#: nota de `_INTENT_TOPICS` desde a F2.8 — aqui ela vira estrutura em vez de
+#: prosa. Nenhuma relacao nova foi inventada: o topic ja existe no documento e
+#: ja esta mapeado a intencao.
+#:
+#: Para estender, basta acrescentar um topic que (a) ja seja declarado por um
+#: documento e (b) ja apareca em `_INTENT_TOPICS`. Um topic que nao cumpra as
+#: duas coisas nao pertence aqui.
+CANONICAL_TOPICS: frozenset[str] = frozenset({"preco"})
+
+
+def canonical_targets(query: str) -> frozenset[str]:
+    """Topics canonicos da intencao desta pergunta. Vazio = sem alvo.
+
+    Interseccao entre o que a intencao pede e o que e reconhecido como fonte
+    de referencia. Deterministico, sem LLM.
+    """
+
+    return detect_intent_topics(query) & CANONICAL_TOPICS
+
+
 def detect_intent_topics(query: str) -> frozenset[str]:
     """Topics canonicos para a intencao da pergunta. Vazio = sem boost.
 
@@ -365,6 +414,17 @@ class SearchResult:
     #: Cossenos do pool vetorial, em ordem. Numero, nunca texto — e o que
     #: permite calibrar o piso por medicao em vez de intuicao.
     vector_scores: list[float] = field(default_factory=list)
+
+    # --- source targeting canonico ----------------------------------------
+    #: Topics canonicos pedidos pela intencao. Vazio = nenhuma intencao com
+    #: fonte de referencia declarada.
+    canonical_target_requested: list[str] = field(default_factory=list)
+    #: Havia candidato ELEGIVEL com esse topic no pool?
+    canonical_target_available: bool = False
+    #: A vaga reservada mudou o resultado? False quando a fonte canonica
+    #: entraria de qualquer jeito — e a diferenca entre "entrou porque venceu
+    #: o ranking" e "entrou por targeting".
+    canonical_target_selected: bool = False
     #: Modo shadow: o top-k que o hibrido TERIA devolvido. Nao afeta `hits`.
     shadow_keys: list[str] = field(default_factory=list)
     latency_ms: int | None = None
@@ -387,6 +447,9 @@ class SearchResult:
             "sources": [h.provenance.external_key or h.provenance.document_id for h in self.hits],
             "documentos_distintos": len({h.provenance.document_id for h in self.hits}),
             "shadow_sources": list(self.shadow_keys),
+            "canonical_target_requested": list(self.canonical_target_requested),
+            "canonical_target_available": self.canonical_target_available,
+            "canonical_target_selected": self.canonical_target_selected,
             "latency_ms": self.latency_ms,
             "ranking": [h.ranking for h in self.hits if h.ranking],
         }
@@ -419,7 +482,27 @@ def _iso(valor: Any) -> str | None:
     return valor.isoformat() if hasattr(valor, "isoformat") else (str(valor) if valor else None)
 
 
-def _diversify(pontuados: list[tuple[int, dict[str, Any]]], *, limit: int) -> list[tuple[int, dict[str, Any]]]:
+def _canonical_pick(pontuados: list[tuple[Any, dict[str, Any]]], canonical_topics: frozenset[str]) -> int | None:
+    """Indice do MELHOR candidato que declara um topic canonico. None se nao ha.
+
+    "Melhor" e a primeira posicao da lista ja ordenada — a reserva nao escolhe
+    por conta propria, so garante que o vencedor daquela fonte entre.
+    """
+
+    if not canonical_topics:
+        return None
+    for indice, (_, linha) in enumerate(pontuados):
+        if set(linha.get("topics") or ()) & canonical_topics:
+            return indice
+    return None
+
+
+def _diversify(
+    pontuados: list[tuple[int, dict[str, Any]]],
+    *,
+    limit: int,
+    canonical_topics: frozenset[str] = frozenset(),
+) -> list[tuple[int, dict[str, Any]]]:
     """Escolhe o top-k espalhando por documento e por receita.
 
     Duas passadas, e a segunda importa tanto quanto a primeira:
@@ -435,12 +518,43 @@ def _diversify(pontuados: list[tuple[int, dict[str, Any]]], *, limit: int) -> li
 
     O score original e preservado e continua ordenando: isto reordena
     posicoes, nao inventa relevancia.
+
+    SOURCE TARGETING CANONICO
+    -------------------------
+
+    Com `canonical_topics` preenchido, UMA vaga e reservada para o melhor
+    candidato que declare um desses topics — antes das duas passadas. As vagas
+    restantes seguem exatamente a regra de sempre.
+
+    Isto NAO altera ranking: acontece depois da fusao, sobre a lista ja
+    ordenada, e o candidato reservado sai da MESMA lista. `canonical_topics`
+    vazio deixa o comportamento byte a byte identico ao anterior.
+
+    A reserva nao pode contornar autorizacao: `pontuados` ja passou por
+    camada, status, whitelist, topic e politica do agente em `_elegiveis`.
+    Uma fonte proibida nao esta nesta lista, entao nao ha o que reservar.
     """
 
     escolhidos: list[tuple[int, dict[str, Any]]] = []
     por_documento: dict[str, int] = {}
     receitas_vistas: set[str] = set()
     usados: set[int] = set()
+
+    def registrar(indice: int) -> None:
+        score, linha = pontuados[indice]
+        escolhidos.append((score, linha))
+        usados.add(indice)
+        documento = str(linha.get("document_id"))
+        por_documento[documento] = por_documento.get(documento, 0) + 1
+        receita = linha.get("recipe_id")
+        if receita:
+            receitas_vistas.add(str(receita))
+
+    # A vaga reservada entra primeiro e conta nos MESMOS tetos: reservar nao
+    # e escapar da diversidade, e ocupar uma das vagas dela.
+    reservado = _canonical_pick(pontuados, canonical_topics)
+    if reservado is not None and limit > 0:
+        registrar(reservado)
 
     for indice, (score, linha) in enumerate(pontuados):
         if len(escolhidos) >= limit:
@@ -451,11 +565,9 @@ def _diversify(pontuados: list[tuple[int, dict[str, Any]]], *, limit: int) -> li
             continue
         if receita and receita in receitas_vistas:
             continue
-        escolhidos.append((score, linha))
-        usados.add(indice)
-        por_documento[documento] = por_documento.get(documento, 0) + 1
-        if receita:
-            receitas_vistas.add(str(receita))
+        if indice in usados:
+            continue
+        registrar(indice)
 
     if len(escolhidos) < limit:
         for indice, (score, linha) in enumerate(pontuados):
@@ -611,6 +723,7 @@ def search(
     embedder: Any | None = None,
     vector_floor: float | None = None,
     weights: dict[str, float] | None = None,
+    canonical_targeting: bool = True,
 ) -> SearchResult:
     """Busca no Brain respeitando a politica de acesso.
 
@@ -698,7 +811,24 @@ def search(
         # senao um indice vazio parece um hibrido que simplesmente nao ajudou.
         retrieval_mode = "LEXICAL_DEGRADADO"
 
-    selecionados = _diversify(ordenados[:teto], limit=limit)
+    # SOURCE TARGETING CANONICO — depois da fusao, sobre a lista ja ordenada.
+    #
+    # `canonical_targeting=False` existe para MEDIR: roda o mesmo caminho sem
+    # a reserva, e a diferenca entre os dois isola a causalidade. O default e
+    # ligado; producao nao depende de flag.
+    pool = ordenados[:teto]
+    alvos = canonical_targets(query) if canonical_targeting else frozenset()
+    reservado = _canonical_pick(pool, alvos)
+
+    selecionados = _diversify(pool, limit=limit, canonical_topics=alvos)
+
+    # "Entrou porque venceu o ranking" ou "entrou pela vaga reservada"? A
+    # resposta exige saber o que teria acontecido SEM a reserva. Custa uma
+    # segunda passada sobre no maximo 20 itens, e so quando ha alvo.
+    reserva_mudou = False
+    if reservado is not None:
+        sem_reserva = {id(linha) for _, linha in _diversify(pool, limit=limit)}
+        reserva_mudou = id(pool[reservado][1]) not in sem_reserva
 
     hits: list[SearchHit] = []
     for _, linha in selecionados:
@@ -796,6 +926,9 @@ def search(
         embedding_model=str(motor.model) if motor is not None else None,
         vector_skip_reason=motivo_sem_vetor,
         vector_scores=[round(score, 4) for score, _ in vetorial[:teto]],
+        canonical_target_requested=sorted(alvos),
+        canonical_target_available=reservado is not None,
+        canonical_target_selected=reserva_mudou,
         shadow_keys=sombra,
         latency_ms=int((perf_counter() - comeco) * 1000),
     )

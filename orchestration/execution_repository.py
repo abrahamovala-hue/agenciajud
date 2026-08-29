@@ -164,6 +164,10 @@ _OUTCOME_ALLOWLIST = (
     "shadow_sources",
     "retrieval_latency_ms",
     "vector_skip_reason",
+    # POST-F3 — source targeting canonico. Nome de topic e dois booleanos.
+    "canonical_target",
+    "canonical_target_available",
+    "canonical_target_selected",
 )
 
 

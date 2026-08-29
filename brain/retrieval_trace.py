@@ -100,6 +100,15 @@ def trace_summary() -> dict[str, Any]:
         "final_candidates": sum(int(a.get("final_candidates") or 0) for a in anotacoes),
         "document_diversity": max((int(a.get("documentos_distintos") or 0) for a in anotacoes), default=0),
         "shadow_sources": list(dict.fromkeys(sombra)),
+        # Source targeting: `requested` diz se a intencao tinha fonte de
+        # referencia, `available` se ela estava no pool e `selected` se a vaga
+        # reservada mudou o resultado. Sao topics e booleanos — nenhum trecho
+        # de query, nenhum corpo.
+        "canonical_target": sorted(
+            {t for a in anotacoes for t in (a.get("canonical_target_requested") or ())}
+        ),
+        "canonical_target_available": any(a.get("canonical_target_available") for a in anotacoes),
+        "canonical_target_selected": any(a.get("canonical_target_selected") for a in anotacoes),
         "retrieval_latency_ms": max(latencias) if latencias else None,
         "vector_skip_reason": next(
             (str(a["vector_skip_reason"]) for a in anotacoes if a.get("vector_skip_reason")), None

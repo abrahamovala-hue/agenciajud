@@ -78,6 +78,18 @@ class RagCase:
 #: `golden=True` marca o subconjunto que NUNCA pode regredir.
 GOLDEN: frozenset[str] = frozenset(
     {
+        # POST-F3: as quatro formulacoes de preco que produziram a falha de
+        # ~1 em 4. Sao invariantes agora: quando OFFERS esta CONFIRMED e
+        # elegivel para o agente, ela PRECISA estar no top-k final.
+        #
+        # Precisam sobreviver a mudanca de embeddings, de RRF, de scoring e da
+        # forma como o agente compoe a query — porque nenhuma dessas coisas
+        # tem o direito de tirar a unica fonte de preco de uma pergunta de
+        # preco.
+        "ola qual o preco do ebook das casquinhas profissionais?",
+        "quanto custa o ebook de casquinhas?",
+        "qual o valor do ebook de recheios?",
+        "oi, quero saber o preco dos ebooks",
         "o ebook de recheios tem brigadeiro?",
         "quantas receitas ele tem?",
         "quais metodos de temperagem ensina?",
@@ -108,6 +120,37 @@ HYBRID_RAG_V1: tuple[RagCase, ...] = (
         ("OFFERS",),
         proibido=("EBOOK_CASQUINHAS",),
         nota="A pergunta literal do MOBILE_FAIL_01/02.",
+    ),
+    # As QUATRO formulacoes medidas em producao. Antes do source targeting,
+    # OFFERS aparecia em 3 de 4 — e a que faltava era justamente a frase que a
+    # Judith usa. Ver `brain/retrieval.py:CANONICAL_TOPICS`.
+    RagCase(
+        "ola qual o preco do ebook das casquinhas profissionais?",
+        "sales-conversion-agent",
+        "PRODUCT_EXACT_MATCH",
+        ("OFFERS",),
+        proibido=("EBOOK_CASQUINHAS",),
+        nota="Frase literal da Judith. Invariante golden.",
+    ),
+    RagCase(
+        "quanto custa o ebook de casquinhas?",
+        "sales-conversion-agent",
+        "PRICE",
+        ("OFFERS",),
+        proibido=("EBOOK_CASQUINHAS",),
+    ),
+    RagCase(
+        "qual o valor do ebook de recheios?",
+        "sales-conversion-agent",
+        "PRICE",
+        ("OFFERS",),
+        proibido=("EBOOK_RECHEIOS",),
+    ),
+    RagCase(
+        "oi, quero saber o preco dos ebooks",
+        "sales-conversion-agent",
+        "PRICE",
+        ("OFFERS",),
     ),
     # --- PRODUCT ALIAS ------------------------------------------------------
     RagCase(
@@ -339,6 +382,9 @@ class CasoAvaliado:
     vector_candidates: int = 0
     latency_ms: int | None = None
     vector_scores: list[float] = field(default_factory=list)
+    canonical_target: list[str] = field(default_factory=list)
+    canonical_target_available: bool = False
+    canonical_target_selected: bool = False
     vazamentos: list[str] = field(default_factory=list)
     erro: str | None = None
     ranking: list[dict[str, Any]] = field(default_factory=list)
@@ -401,6 +447,9 @@ class CasoAvaliado:
             "lacuna_correta": self.lacuna_correta,
             "vazamentos": list(self.vazamentos),
             "retrieval_mode": self.retrieval_mode,
+            "canonical_target": list(self.canonical_target),
+            "canonical_target_available": self.canonical_target_available,
+            "canonical_target_selected": self.canonical_target_selected,
             "lexical_candidates": self.lexical_candidates,
             "vector_candidates": self.vector_candidates,
             "latency_ms": self.latency_ms,
@@ -417,6 +466,7 @@ def _rodar_caso(
     embedder: Any | None,
     vector_floor: float | None = None,
     weights: dict[str, float] | None = None,
+    canonical_targeting: bool = True,
 ) -> CasoAvaliado:
     from brain.access_policy import AccessDenied
     from brain.query_context import enrich, reset, set_session
@@ -449,6 +499,7 @@ def _rodar_caso(
             embedder=embedder,
             vector_floor=vector_floor,
             weights=weights,
+            canonical_targeting=canonical_targeting,
         )
     except AccessDenied as erro:
         avaliado.erro = f"AccessDenied: {erro}"
@@ -466,6 +517,9 @@ def _rodar_caso(
     avaliado.vector_candidates = resultado.vector_candidates
     avaliado.latency_ms = resultado.latency_ms
     avaliado.vector_scores = list(resultado.vector_scores)
+    avaliado.canonical_target = list(resultado.canonical_target_requested)
+    avaliado.canonical_target_available = resultado.canonical_target_available
+    avaliado.canonical_target_selected = resultado.canonical_target_selected
     avaliado.vazamentos = [f for f in avaliado.fontes if f in caso.proibido]
     avaliado.ranking = [h.ranking for h in resultado.hits if h.ranking]
     return avaliado
@@ -480,6 +534,7 @@ def run_rag_eval(
     apenas_golden: bool = False,
     vector_floor: float | None = None,
     weights: dict[str, float] | None = None,
+    canonical_targeting: bool = True,
 ) -> list[CasoAvaliado]:
     """Roda o conjunto num modo. Nao altera nada, nao chama LLM."""
 
@@ -493,6 +548,7 @@ def run_rag_eval(
             embedder=embedder,
             vector_floor=vector_floor,
             weights=weights,
+            canonical_targeting=canonical_targeting,
         )
         for caso in casos
     ]
@@ -526,6 +582,7 @@ def rag_summary(resultados: list[CasoAvaliado]) -> dict[str, Any]:
         entrada["recall"] = _media(entrada.pop("_recall"))
         entrada["mrr"] = _media(entrada.pop("_mrr"))
 
+    casos_com_offers = [r for r in resultados if "OFFERS" in r.caso.esperado]
     latencias = [r.latency_ms for r in resultados if r.latency_ms is not None]
     cossenos = sorted(s for r in resultados for s in r.vector_scores)
     return {
@@ -551,6 +608,17 @@ def rag_summary(resultados: list[CasoAvaliado]) -> dict[str, Any]:
         "vazamentos": sum(len(r.vazamentos) for r in resultados),
         "casos_com_vazamento": [r.caso.query for r in resultados if r.vazamentos],
         "golden_hit_rate": _media([1.0 if r.hit else 0.0 for r in golden if r.mede]),
+        # POST-F3: a metrica que a correcao de source targeting existe para
+        # mover. Contada sobre os casos cujo gabarito EXIGE OFFERS.
+        "offers_coverage": (
+            f"{sum(1 for r in casos_com_offers if 'OFFERS' in r.fontes)}/{len(casos_com_offers)}"
+            if casos_com_offers
+            else None
+        ),
+        "offers_faltando": [
+            r.caso.query for r in resultados if "OFFERS" in r.caso.esperado and "OFFERS" not in r.fontes
+        ],
+        "targeting_mudou_o_resultado": sum(1 for r in resultados if r.canonical_target_selected),
         "golden_falhos": [r.caso.query for r in golden if r.mede and not r.hit],
         "diversidade_media": _media([float(r.documentos_distintos) for r in resultados if r.fontes]),
         "resultados_vazios": sum(1 for r in resultados if not r.fontes and not r.caso.espera_lacuna),
@@ -569,6 +637,7 @@ def compare_modes(
     embedder: Any | None = None,
     vector_floor: float | None = None,
     weights: dict[str, float] | None = None,
+    canonical_targeting: bool = True,
 ) -> dict[str, Any]:
     """CURRENT vs HYBRID sobre o mesmo conjunto. E o relatorio do shadow.
 
@@ -576,7 +645,9 @@ def compare_modes(
     `RAG_MODE`. Quem le decide se o hibrido merece o cutover.
     """
 
-    atual = run_rag_eval(repository, mode="current", limit=limit, embedder=embedder)
+    atual = run_rag_eval(
+        repository, mode="current", limit=limit, embedder=embedder, canonical_targeting=canonical_targeting
+    )
     hibrido = run_rag_eval(
         repository,
         mode="hybrid",
@@ -584,6 +655,7 @@ def compare_modes(
         embedder=embedder,
         vector_floor=vector_floor,
         weights=weights,
+        canonical_targeting=canonical_targeting,
     )
 
     diferencas = []
@@ -612,7 +684,11 @@ def compare_modes(
     resumo_atual = rag_summary(atual)
     resumo_hibrido = rag_summary(hibrido)
     return {
-        "ajuste": {"vector_floor": vector_floor, "weights": weights},
+        "ajuste": {
+            "vector_floor": vector_floor,
+            "weights": weights,
+            "canonical_targeting": canonical_targeting,
+        },
         "current": resumo_atual,
         "hybrid": resumo_hibrido,
         "delta": {
