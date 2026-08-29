@@ -9,6 +9,7 @@ chamam agent.run() diretamente - sempre passam por aqui.
 
 from __future__ import annotations
 
+import ast
 import json
 from time import perf_counter
 from typing import Any, TypeVar, overload
@@ -93,6 +94,44 @@ def _extract_sources_opened(response: Any) -> list[str]:
 _NESTED_RESULT_KEYS = ("resultados", "results")
 
 
+def _parse_tool_content(content: Any) -> Any:
+    """Interpreta o resultado de uma tool. JSON e o contrato; repr e tolerado.
+
+    JSON continua sendo o formato oficial — `brain/cutover.py:_payload` garante
+    isso na origem. Este fallback existe porque a origem ja falhou uma vez: uma
+    tool devolveu `dict`, o Agno guardou o repr Python no historico, e a
+    provenance sumiu em silencio. Uma resposta correta foi rejeitada em
+    producao por isso.
+
+    `ast.literal_eval` avalia SOMENTE literais — dict, list, str, numero,
+    bool, None. Nao chama funcao, nao importa modulo, nao executa nada.
+    `eval` faria e por isso nao aparece aqui em nenhuma circunstancia.
+
+    Devolve `None` quando nao consegue interpretar: o chamador trata como
+    "nenhuma fonte", que e o fail-safe correto — melhor nao registrar fonte do
+    que registrar uma que nao foi aberta.
+    """
+
+    # So estrutura sai daqui. Um literal solto — `42`, `"erro"`, `null` — e
+    # JSON valido mas nao carrega provenance nenhuma, e o filtro vale para os
+    # dois caminhos: sem isso o JSON aceitaria o que o repr recusa.
+    def _estrutura(valor: Any) -> Any:
+        return valor if isinstance(valor, (dict, list)) else None
+
+    if not isinstance(content, str):
+        return _estrutura(content)
+
+    try:
+        return _estrutura(json.loads(content))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    try:
+        return _estrutura(ast.literal_eval(content))
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        return None
+
+
 def _sources_in_tool_result(content: Any) -> list[str]:
     """Extrai as chaves `fonte` do resultado de uma tool de consulta.
 
@@ -103,9 +142,8 @@ def _sources_in_tool_result(content: Any) -> list[str]:
     devolveu a lacuna, nao o documento - nada foi consultado ali.
     """
 
-    try:
-        payload = json.loads(content) if isinstance(content, str) else content
-    except (json.JSONDecodeError, TypeError):
+    payload = _parse_tool_content(content)
+    if payload is None:
         return []
 
     if isinstance(payload, dict):

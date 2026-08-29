@@ -18,8 +18,6 @@ do outro. **Ninguem testava a costura.** E o que este arquivo faz.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from orchestration.evidence_gate import evaluate_final_response
@@ -27,12 +25,22 @@ from orchestration.step_helpers import _CONSULT_TOOLS, _extract_sources_opened, 
 
 
 class _Mensagem:
-    """Mensagem de tool no formato que o runtime do Agno produz."""
+    """Mensagem de tool como o Agno REALMENTE a monta.
+
+    A versao anterior fazia `json.dumps(content)` quando o content nao era
+    string — e foi isso que escondeu o MOBILE_FAIL_02 por uma rodada inteira.
+    O Agno nao serializa: `create_function_call_result` faz `content=output`.
+    Uma tool que devolve dict chega ao historico como repr Python.
+
+    Agora o default e `str(content)`, que e o que o runtime faz. Para testar o
+    caminho JSON, passe a string ja serializada — como as tools corrigidas
+    passaram a fazer.
+    """
 
     def __init__(self, tool_name: str, content) -> None:
         self.role = "tool"
         self.tool_name = tool_name
-        self.content = content if isinstance(content, str) else json.dumps(content)
+        self.content = content if isinstance(content, str) else str(content)
         self.tool_calls = None
 
 

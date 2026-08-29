@@ -9,6 +9,8 @@ As duas propriedades que estes testes existem para travar:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import create_engine
 
@@ -203,7 +205,13 @@ class TestTroasDoAgentePromovido:
         bootstrap.set_knowledge_repository(object())  # sem os metodos esperados
         try:
             ferramentas = {t.name: t for t in build_knowledge_tools_for("customer-support-agent")}
-            resposta = ferramentas["buscar_conhecimento"].entrypoint("qualquer coisa")
+            bruto = ferramentas["buscar_conhecimento"].entrypoint("qualquer coisa")
+
+            # A tool devolve JSON string, nao dict — e o contrato de
+            # serializacao do Agno. Devolver dict fazia o Agno guardar o repr
+            # Python no historico e a provenance sumia (MOBILE_FAIL_02).
+            assert isinstance(bruto, str)
+            resposta = json.loads(bruto)
             assert resposta["status"] == "BRAIN_INDISPONIVEL"
             assert resposta["resultados"] == []
         finally:

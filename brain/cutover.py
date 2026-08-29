@@ -40,6 +40,7 @@ e comunidade.
 
 from __future__ import annotations
 
+import json
 from os import getenv
 from typing import Any
 
@@ -109,6 +110,35 @@ def cutover_report() -> dict[str, Any]:
     }
 
 
+def _payload(dados: dict[str, Any]) -> str:
+    """Serializa o retorno de uma tool. JSON, sempre.
+
+    POR QUE ISTO EXISTE
+    -------------------
+
+    O Agno guarda o retorno de uma tool em `Message.content` sem converter:
+    `create_function_call_result(...)` faz `content=output`. Quando a funcao
+    devolve um `dict`, o que chega ao historico e a REPRESENTACAO PYTHON dele
+    — aspas simples, `None` no lugar de `null`:
+
+        {'status': 'OK', 'resultados': [{'fonte': 'PRODUCTS', ...
+
+    Isso nao e JSON. `_sources_in_tool_result` chama `json.loads` e recebe
+    `JSONDecodeError`, entao devolve lista vazia. `sources_opened` fica vazio,
+    o agente cita as fontes que leu (o modelo entende o repr sem problema), e o
+    Evidence Gate conclui — corretamente, dado o que enxerga — que a citacao
+    foi inventada. Resposta certa, rejeitada.
+
+    As tools nativas do Agno sao tipadas `-> str` e serializam elas mesmas. E
+    o contrato implicito, e estas passam a cumpri-lo.
+
+    `ensure_ascii=False` para o modelo ler "preço" e nao "pre\\u00e7o".
+    `default=str` para que um datetime em provenance nao derrube a tool.
+    """
+
+    return json.dumps(dados, ensure_ascii=False, default=str)
+
+
 def build_brain_retriever_for(agent_id: str) -> Any:
     """`search_knowledge_base` do Agno, servido pelo Brain.
 
@@ -160,14 +190,16 @@ def build_brain_tools_for(agent_id: str) -> list[Any]:
 
         return get_knowledge_repository()
 
-    def listar_fontes_disponiveis() -> dict[str, Any]:
+    def listar_fontes_disponiveis() -> str:
         from brain.retrieval import search
 
         try:
             repositorio = _repositorio()
             linhas = repositorio.chunks_for_search(statuses=acesso.statuses, layers=acesso.layers)
         except Exception as erro:  # noqa: BLE001
-            return {"status": "BRAIN_INDISPONIVEL", "detalhe": f"{type(erro).__name__}", "documentos_disponiveis": []}
+            return _payload(
+                {"status": "BRAIN_INDISPONIVEL", "detalhe": f"{type(erro).__name__}", "documentos_disponiveis": []}
+            )
 
         vistos: dict[str, dict[str, Any]] = {}
         for linha in linhas:
@@ -190,14 +222,20 @@ def build_brain_tools_for(agent_id: str) -> list[Any]:
                 },
             )
         del search  # a listagem nao busca; so declara o que existe
-        return {
-            "documentos_disponiveis": sorted(vistos.values(), key=lambda d: str(d["fonte"])),
-            "fontes_ausentes": [
-                {"fonte": m.key, "responsavel": m.owner, "motivo": m.reason} for m in policy.missing_sources
-            ],
-        }
+        return _payload(
+            {
+                "documentos_disponiveis": sorted(vistos.values(), key=lambda d: str(d["fonte"])),
+                # `ask_agent` e o campo real de MissingSource. A versao anterior
+                # usava `.owner`, que nao existe: a tool levantava AttributeError
+                # e o agente recebia a mensagem de erro no lugar da lista.
+                "fontes_ausentes": [
+                    {"fonte": m.key, "responsavel": m.ask_agent, "motivo": m.reason}
+                    for m in policy.missing_sources
+                ],
+            }
+        )
 
-    def buscar_conhecimento(pergunta: str) -> dict[str, Any]:
+    def buscar_conhecimento(pergunta: str) -> str:
         from brain.query_context import enrich
         from brain.retrieval import search
 
@@ -209,20 +247,24 @@ def build_brain_tools_for(agent_id: str) -> list[Any]:
         try:
             resultado = search(agent_id=agent_id, query=consulta, repository=_repositorio(), limit=4)
         except Exception as erro:  # noqa: BLE001
-            return {"status": "BRAIN_INDISPONIVEL", "detalhe": f"{type(erro).__name__}", "resultados": []}
+            return _payload({"status": "BRAIN_INDISPONIVEL", "detalhe": f"{type(erro).__name__}", "resultados": []})
 
         if not resultado.hits:
-            return {
-                "status": "NENHUM_RESULTADO",
-                "resultados": [],
+            return _payload(
+                {
+                    "status": "NENHUM_RESULTADO",
+                    "resultados": [],
+                    "contexto_adicionado": contextualizada,
+                    "bloqueados_pela_politica": resultado.filtered_out,
+                }
+            )
+        return _payload(
+            {
+                "status": "OK",
                 "contexto_adicionado": contextualizada,
-                "bloqueados_pela_politica": resultado.filtered_out,
+                "resultados": resultado.as_documents(),
             }
-        return {
-            "status": "OK",
-            "contexto_adicionado": contextualizada,
-            "resultados": resultado.as_documents(),
-        }
+        )
 
     listar_fontes_disponiveis.__doc__ = (
         "Lista as fontes que voce pode consultar, com camada, status e quem aprovou, "
