@@ -140,14 +140,27 @@ Ver `.env.example` pra lista comentada. Obrigatórias em produção:
 
 | Var | Valores | Default | O que faz |
 |---|---|---|---|
-| `RAG_MODE` | `current` \| `hybrid_shadow` \| `hybrid` | `current` | Como o Brain recupera. Valor desconhecido cai no default. |
-| `BRAIN_ADMIN_ENABLED` | `true` \| ausente | ausente | Registra `/admin/brain/{status,embeddings,eval}`. Desligue depois de usar. |
+| `RAG_MODE` | `current` \| `hybrid_shadow` \| `hybrid` | `current` — **producao roda `hybrid`** | Como o Brain recupera. Valor desconhecido cai no default. |
+| `BRAIN_ADMIN_ENABLED` | `true` \| ausente | ausente | Registra `/admin/brain/{status,embeddings,eval,executions}`. Desligue depois de usar. |
 | `BRAIN_EMBEDDER` | `deterministic` \| ausente | ausente | `deterministic` roda a suite sem rede. **Nunca em producao.** |
 
 `RAG_MODE` e o rollback da F3: apagar a variavel volta ao lexical puro, sem
-migration e sem rebuild. `hybrid_shadow` calcula o hibrido, registra no
-ExecutionLog e devolve o resultado lexical — shadow que muda a resposta nao e
-shadow.
+migration e sem rebuild. Foi exercitado de verdade no cutover
+(`hybrid` -> `hybrid_shadow` -> `hybrid`), nao so declarado.
+
+`hybrid_shadow` calcula o hibrido, registra no ExecutionLog e devolve o
+resultado lexical — shadow que muda a resposta nao e shadow. Ele grava as DUAS
+pernas na mesma execucao (`sources_opened` e `shadow_sources`), e e o unico
+jeito de compara-las sobre a query que o agente DE FATO escreve. Isso importa:
+o eval offline mede a frase da cliente, e producao usa a frase que o LLM
+compoe a partir dela. Sao coisas diferentes.
+
+O piso de similaridade mora em `Embedder.score_floor` (0.60 para
+`text-embedding-3-small`) e foi calibrado por varredura contra o acervo real —
+ver a tabela em `brain/retrieval.py:VECTOR_SCORE_FLOOR`. Quando o acervo
+mudar, **remedir** com `POST /admin/brain/eval` passando `vector_floor`.
+Nunca ajustar por intuicao: peso lexical maior parecia obvio e foi medido e
+reprovado (recall 0.780 -> 0.633).
 
 O indice semantico vive em `judith_knowledge_embeddings` (migration 005,
 reversivel). Ele e DERIVADO: descartar a tabela nao perde conhecimento, so
@@ -159,7 +172,12 @@ Indexar producao (as rotas so existem com a flag ligada):
 ```bash
 curl -H "Authorization: Bearer $OS_SECURITY_KEY"   https://agenciajud-production.up.railway.app/admin/brain/status
 curl -X POST -H "Authorization: Bearer $OS_SECURITY_KEY" -H "Content-Type: application/json"   -d '{}' https://agenciajud-production.up.railway.app/admin/brain/embeddings
+curl -H "Authorization: Bearer $OS_SECURITY_KEY"   "https://agenciajud-production.up.railway.app/admin/brain/executions?limit=5"
 ```
+
+O pipeline e idempotente por `(checksum, modelo)`: rodar de novo sem mudanca
+de conteudo faz zero chamada de API. `/admin/brain/executions` devolve so a
+telemetria das execucoes — nunca a mensagem da cliente nem a resposta.
 
 ## Adicionar features (trilha de evolução)
 
